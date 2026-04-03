@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Live Monitor - Watcher Hub</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Manrope:wght@700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-tertiary": "#ffffff",
+              "surface-dim": "#d8dadc",
+              "error-container": "#ffdad6",
+              "on-error-container": "#93000a",
+              "tertiary-fixed-dim": "#a4c9ff",
+              "background": "#f7f9fb",
+              "surface-container": "#eceef0",
+              "primary": "#0058be",
+              "surface-container-high": "#e6e8ea",
+              "on-primary": "#ffffff",
+              "surface-bright": "#f7f9fb",
+              "on-primary-fixed": "#001a42",
+              "on-tertiary-fixed-variant": "#004883",
+              "secondary-fixed": "#6ffbbe",
+              "on-tertiary-fixed": "#001c39",
+              "on-tertiary-container": "#fdfcff",
+              "surface": "#f7f9fb",
+              "surface-container-low": "#f2f4f6",
+              "secondary-container": "#6cf8bb",
+              "secondary-fixed-dim": "#4edea3",
+              "surface-variant": "#e0e3e5",
+              "tertiary-fixed": "#d4e3ff",
+              "outline": "#727785",
+              "surface-tint": "#005ac2",
+              "inverse-primary": "#adc6ff",
+              "secondary": "#006c49",
+              "outline-variant": "#c2c6d6",
+              "on-background": "#191c1e",
+              "tertiary": "#005da8",
+              "on-primary-container": "#fefcff",
+              "primary-fixed-dim": "#adc6ff",
+              "inverse-on-surface": "#eff1f3",
+              "on-secondary-fixed-variant": "#005236",
+              "tertiary-container": "#2676c8",
+              "on-secondary-fixed": "#002113",
+              "primary-container": "#2170e4",
+              "primary-fixed": "#d8e2ff",
+              "on-primary-fixed-variant": "#004395",
+              "on-error": "#ffffff",
+              "on-surface": "#191c1e",
+              "surface-container-highest": "#e0e3e5",
+              "on-surface-variant": "#424754",
+              "error": "#ba1a1a",
+              "on-secondary-container": "#00714d",
+              "inverse-surface": "#2d3133",
+              "surface-container-lowest": "#ffffff",
+              "on-secondary": "#ffffff"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      }
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-surface font-body text-on-surface min-h-screen pb-32">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 bg-[#f7f9fb]/70 backdrop-blur-xl flex justify-between items-center px-6 py-4">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full overflow-hidden bg-surface-container-high">
+<img class="w-full h-full object-cover" data-alt="Close-up professional portrait of a smiling man with neat hair against a soft blue studio background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBqFj1e2TTGOJRit50htzaYJdjsN3P3B8Pzq4uspSNLpJ15pJCY8KuKaNQYWPk2to3ht2mN33tnOEbMKyyp9H4kB8VXYnB1T3enD_jXCY9k8Clg0LcQxxxTs2MBuEHARH_nW4anhOdDNdDDzhJidNjvsdtYx53hEFGkU6wyvEykMtRzkaSvsXpzfzPnOGTs5Rlt6rSrHtEc-7Wv0mv5osyp7Pcr3jk4UNN7WdGA4TWCM38xXe2q93hE6U8gb3GQvrHkFwE2tCep9C5Y"/>
+</div>
+<h1 class="font-headline font-black text-blue-600 text-lg tracking-tight">Watcher Hub</h1>
+</div>
+<button class="w-10 h-10 flex items-center justify-center rounded-full bg-surface-container-lowest hover:opacity-80 transition-opacity active:opacity-70">
+<span class="material-symbols-outlined text-slate-500">settings</span>
+</button>
+</header>
+<main class="pt-24 px-6 flex flex-col gap-6 max-w-2xl mx-auto h-screen">
+<!-- Top Card: Small Live Preview (25% height approx) -->
+<section class="h-[194px] min-h-[160px] bg-surface-container-lowest rounded-lg overflow-hidden relative group">
+<div class="absolute inset-0 z-0">
+<img class="w-full h-full object-cover opacity-90" data-alt="High angle indoor security camera view of a modern minimalist living room with clean white furniture and soft natural light" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB_vEdzoWj4kB8NY1D0KMBM0C5PEeju2XtxynibJYZMlUNzs1q7PmjBKSAo-B0BQjuDFgfLPOLWzXEaGRg1ZlKZDDjLbeMc3VSO6a6IgpIR1J_dKArfAGwEM5W5FrImRIlfhW2Ry1PAm4nBADXe-vRzGpho6Pae_90JlJ-d9JdeqgINy5Xbl0t9jET-BsSsE4dcKW99_MBiA5riElMTpsNaRG9HzZzOlbLisd8og-hk9oMssWyB3LzX1Ely_JMXITgreejUuxm_PfS7"/>
+<div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
+</div>
+<div class="absolute top-4 left-4 z-10 flex items-center gap-2">
+<div class="flex items-center gap-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
+<span class="relative flex h-2 w-2">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-secondary"></span>
+</span>
+<span class="text-[10px] font-bold text-white tracking-widest uppercase">Live View</span>
+</div>
+</div>
+<div class="absolute bottom-4 left-4 right-4 z-10 flex justify-between items-end">
+<div class="space-y-0.5">
+<h2 class="font-headline font-bold text-white text-lg">Front Hallway</h2>
+<p class="font-label text-white/80 text-[10px] tracking-wide">IP: 192.168.1.104</p>
+</div>
+<div class="bg-primary px-3 py-1 rounded-full">
+<span class="text-[10px] font-bold text-white uppercase tracking-tighter">Excellent Link</span>
+</div>
+</div>
+</section>
+<!-- Middle Card: Previous Monitor Tasks (30% height approx) -->
+<section class="h-[247px] flex flex-col gap-4">
+<div class="flex justify-between items-center">
+<h3 class="font-headline font-bold text-on-surface text-base">Recent Monitor Tasks</h3>
+<span class="text-primary text-xs font-bold cursor-pointer">View All</span>
+</div>
+<div class="flex overflow-x-auto gap-4 no-scrollbar pb-2">
+<!-- Task 1 -->
+<div class="flex-shrink-0 w-44 bg-surface-container-lowest p-4 rounded-lg flex flex-col justify-between group cursor-pointer">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center mb-4">
+<span class="material-symbols-outlined text-on-secondary-container">person_search</span>
+</div>
+<div>
+<p class="font-headline font-bold text-sm leading-tight mb-1">Entry Detection</p>
+<p class="font-label text-outline text-[10px]">2h · Human AI</p>
+</div>
+</div>
+<!-- Task 2 -->
+<div class="flex-shrink-0 w-44 bg-surface-container-lowest p-4 rounded-lg flex flex-col justify-between group cursor-pointer">
+<div class="w-10 h-10 rounded-full bg-tertiary-fixed flex items-center justify-center mb-4">
+<span class="material-symbols-outlined text-on-tertiary-fixed-variant">pets</span>
+</div>
+<div>
+<p class="font-headline font-bold text-sm leading-tight mb-1">Pet Monitor</p>
+<p class="font-label text-outline text-[10px]">8h · Zone B</p>
+</div>
+</div>
+<!-- Task 3 -->
+<div class="flex-shrink-0 w-44 bg-surface-container-lowest p-4 rounded-lg flex flex-col justify-between group cursor-pointer">
+<div class="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center mb-4">
+<span class="material-symbols-outlined text-primary">package_2</span>
+</div>
+<div>
+<p class="font-headline font-bold text-sm leading-tight mb-1">Package Watch</p>
+<p class="font-label text-outline text-[10px]">4h · Porch</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Bottom Card: Core Interaction Stepper (45% height approx) -->
+<section class="flex-grow bg-surface-container-lowest rounded-xl p-8 shadow-sm flex flex-col">
+<!-- Stepper Header -->
+<div class="flex justify-between items-center mb-8 relative">
+<div class="absolute top-1/2 left-0 w-full h-1 bg-surface-container-high -translate-y-1/2 z-0 rounded-full"></div>
+<!-- Step 1 (Active) -->
+<div class="relative z-10 flex flex-col items-center">
+<div class="w-10 h-10 bg-primary text-white rounded-full flex items-center justify-center font-bold text-sm ring-4 ring-white shadow-lg">1</div>
+<span class="absolute -bottom-6 text-[10px] font-bold text-primary whitespace-nowrap uppercase tracking-wider">Mode</span>
+</div>
+<!-- Step 2 (Inactive) -->
+<div class="relative z-10 flex flex-col items-center">
+<div class="w-10 h-10 bg-surface-container-highest text-outline rounded-full flex items-center justify-center font-bold text-sm ring-4 ring-white">2</div>
+<span class="absolute -bottom-6 text-[10px] font-bold text-outline whitespace-nowrap uppercase tracking-wider">Duration</span>
+</div>
+<!-- Step 3 (Inactive) -->
+<div class="relative z-10 flex flex-col items-center">
+<div class="w-10 h-10 bg-surface-container-highest text-outline rounded-full flex items-center justify-center font-bold text-sm ring-4 ring-white">3</div>
+<span class="absolute -bottom-6 text-[10px] font-bold text-outline whitespace-nowrap uppercase tracking-wider">Review</span>
+</div>
+</div>
+<!-- Content Area (Step 1: Choose Mode) -->
+<div class="mt-8 flex-grow">
+<div class="mb-6">
+<h4 class="font-headline font-extrabold text-xl text-on-surface">Choose Mode</h4>
+<p class="font-body text-sm text-on-surface-variant">Select the AI intelligence level for this task.</p>
+</div>
+<div class="grid grid-cols-1 gap-3">
+<!-- Option A -->
+<label class="relative flex items-center p-4 rounded-lg bg-surface-container-low cursor-pointer border-2 border-primary ring-2 ring-primary/10 transition-all">
+<input checked="" class="hidden" name="mode" type="radio"/>
+<div class="w-12 h-12 rounded-full bg-primary-container flex items-center justify-center mr-4">
+<span class="material-symbols-outlined text-on-primary-container">psychology</span>
+</div>
+<div class="flex-grow">
+<p class="font-headline font-bold text-sm text-on-surface">Neural Intelligence</p>
+<p class="text-[11px] text-on-surface-variant">High precision object tagging</p>
+</div>
+<span class="material-symbols-outlined text-primary" data-weight="fill">check_circle</span>
+</label>
+<!-- Option B -->
+<label class="relative flex items-center p-4 rounded-lg bg-surface-container-low cursor-pointer border-2 border-transparent hover:bg-surface-container-high transition-all">
+<input class="hidden" name="mode" type="radio"/>
+<div class="w-12 h-12 rounded-full bg-surface-container-highest flex items-center justify-center mr-4">
+<span class="material-symbols-outlined text-on-surface-variant">sensors</span>
+</div>
+<div class="flex-grow">
+<p class="font-headline font-bold text-sm text-on-surface">Basic Motion</p>
+<p class="text-[11px] text-on-surface-variant">Simple frame-change alerts</p>
+</div>
+<span class="material-symbols-outlined text-outline-variant">radio_button_unchecked</span>
+</label>
+</div>
+</div>
+<!-- Action Button -->
+<button class="w-full py-4 mt-6 bg-gradient-to-r from-primary to-primary-container rounded-full text-white font-headline font-bold shadow-md active:scale-95 transition-transform">
+                Next Step
+            </button>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full flex justify-around items-center px-8 pb-8 pt-4 bg-[#ffffff]/70 backdrop-blur-2xl rounded-t-[3rem] z-50 shadow-[0_-12px_32px_-4px_rgba(25,28,30,0.06)]">
+<div class="flex flex-col items-center">
+<button class="flex items-center justify-center bg-blue-600 text-white rounded-full w-12 h-12 mb-2 scale-110 duration-300 ease-out shadow-lg">
+<span class="material-symbols-outlined" data-weight="fill">distance</span>
+</button>
+</div>
+<div class="flex flex-col items-center">
+<button class="flex items-center justify-center text-slate-400 w-12 h-12 mb-2 hover:bg-slate-100 transition-all rounded-full">
+<span class="material-symbols-outlined">grid_view</span>
+</button>
+</div>
+<div class="flex flex-col items-center">
+<button class="flex items-center justify-center text-slate-400 w-12 h-12 mb-2 hover:bg-slate-100 transition-all rounded-full">
+<span class="material-symbols-outlined">analytics</span>
+</button>
+</div>
+</nav>
+</body></html>

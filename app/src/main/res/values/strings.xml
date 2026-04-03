@@ -1,0 +1,135 @@
+<resources>
+    <string name="app_name">Watcher</string>
+
+    <string name="main_title">Watcher</string>
+    <string name="main_subtitle">自然语言监控，任务可复用</string>
+    <string name="main_open_settings">打开设置</string>
+    <string name="main_voice_recognition_unavailable">当前设备无法使用语音识别。</string>
+    <string name="main_snapshot_saved">截图已保存：%1$s</string>
+    <string name="main_snapshot_save_failed">截图保存失败。</string>
+    <string name="main_monitoring_started">已开始监控。</string>
+    <string name="main_monitoring_stopped">已停止监控。</string>
+    <string name="main_settings_saved">设置已保存。</string>
+    <string name="main_empty_hint">先连接摄像头，再描述监控或分析任务。</string>
+
+    <string name="task_editor_loading">正在解析监控需求…</string>
+    <string name="task_editor_request_failed">请求失败</string>
+    <string name="task_editor_title">任务编辑</string>
+    <string name="task_editor_task_title">任务标题</string>
+    <string name="task_editor_requirement">监控目标</string>
+    <string name="task_editor_interval">检查间隔（秒）</string>
+    <string name="task_editor_prompt">检测提示词</string>
+    <string name="task_editor_save">保存任务</string>
+    <string name="task_editor_use_current_frame">使用当前画面</string>
+    <string name="task_editor_copy_json">复制 JSON</string>
+    <string name="task_editor_refresh_baseline">刷新基准帧</string>
+
+    <string name="input_placeholder">例如：有人靠近床铺并停留超过 10 秒时提醒我。</string>
+    <string name="input_listening">正在监听</string>
+    <string name="input_voice">语音输入</string>
+    <string name="input_analyzing">正在分析</string>
+    <string name="input_analyze">分析任务</string>
+
+    <string name="monitor_panel_title">当前监控</string>
+    <string name="monitor_status_running">运行中</string>
+    <string name="monitor_status_paused">已暂停</string>
+    <string name="monitor_no_task">未选择任务</string>
+    <string name="monitor_no_task_hint">请先解析或加载一个任务，再开始监控。</string>
+    <string name="monitor_interval">间隔 %1$d 秒</string>
+    <string name="monitor_stat_checks">检查</string>
+    <string name="monitor_stat_alert">告警</string>
+    <string name="monitor_stat_warning">预警</string>
+    <string name="monitor_stat_normal">正常</string>
+    <string name="monitor_stat_skip">跳过</string>
+    <string name="monitor_stat_fail">失败</string>
+    <string name="monitor_no_summary">暂无结果摘要。</string>
+    <string name="monitor_start">开始</string>
+    <string name="monitor_resume">继续</string>
+    <string name="monitor_pause">暂停</string>
+    <string name="monitor_stop">停止</string>
+    <string name="monitor_logs_title">监控日志</string>
+    <string name="monitor_logs_clear">清空</string>
+    <string name="monitor_logs_empty">暂无监控日志。</string>
+    <string name="monitor_log_confidence">置信度 %1$d%%</string>
+    <string name="monitor_log_line">%1$s  %2$s</string>
+
+    <string name="history_title">已保存任务</string>
+    <string name="history_empty">先创建一条任务，后续可在这里复用。</string>
+    <string name="history_delete_task">删除任务</string>
+    <string name="history_interval">每 %1$d 秒</string>
+    <string name="history_not_run">未运行</string>
+    <string name="history_runs">运行 %1$d 次</string>
+
+    <string name="debug_frames_title">调试画面</string>
+    <string name="debug_baseline">基准帧</string>
+    <string name="debug_last_frame">最近分析帧</string>
+    <string name="debug_no_image">暂无图像</string>
+    <string name="debug_dimensions_placeholder">--x--</string>
+
+    <string name="stream_live_content_description">实时视频流</string>
+    <string name="stream_status_connecting">正在连接视频流…</string>
+    <string name="stream_status_unavailable">视频流不可用</string>
+    <string name="stream_status_receiving">正在接收画面…</string>
+    <string name="stream_status_idle">暂停连接中，可随时重新连接。</string>
+    <string name="stream_connection_connected">已连接</string>
+    <string name="stream_connection_connecting">连接中</string>
+    <string name="stream_connection_error">连接失败</string>
+    <string name="stream_connection_disconnected">已暂停</string>
+    <string name="stream_capture_snapshot">保存截图</string>
+    <string name="stream_stop">暂停连接</string>
+    <string name="stream_start">重新连接</string>
+    <string name="stream_fps">%1$d FPS</string>
+
+    <string name="settings_title">视频与监控设置</string>
+    <string name="settings_camera_host">摄像头地址</string>
+    <string name="settings_stream_port">视频流端口</string>
+    <string name="settings_jpeg_quality">JPEG 质量（4-63）</string>
+    <string name="settings_lighting_section">补光</string>
+    <string name="settings_led_control">启用 LED 控制</string>
+    <string name="settings_auto_light">启用自动补光</string>
+    <string name="settings_target_brightness">目标亮度（0-255）</string>
+    <string name="settings_execution_section">执行策略</string>
+    <string name="settings_change_detection">场景变化很小时跳过模型调用</string>
+    <string name="settings_change_threshold">变化阈值（百分比）</string>
+    <string name="settings_alert_cooldown">告警冷却时间（秒）</string>
+
+    <string name="result_success_title">分析成功</string>
+    <string name="result_error_title">分析失败</string>
+    <string name="result_copy_json">复制 JSON</string>
+    <string name="result_user_requirement">用户需求</string>
+    <string name="result_prompt_template">每次检测提示词</string>
+    <string name="result_interval_value">每 %1$d 秒</string>
+
+    <string name="common_save">保存</string>
+    <string name="common_cancel">取消</string>
+    <string name="common_confirm">确定</string>
+
+    <string name="check_result_none">未开始</string>
+    <string name="check_result_alert">告警</string>
+    <string name="check_result_warning">预警</string>
+    <string name="check_result_normal">正常</string>
+    <string name="check_result_unknown">未知</string>
+
+    <string name="log_action_result">结果</string>
+    <string name="log_action_skip">跳过</string>
+    <string name="log_action_error">错误</string>
+    <string name="log_action_task">任务</string>
+
+    <string name="error_empty_request">请先输入监控需求。</string>
+    <string name="error_analyze_request_failed">监控需求解析失败。</string>
+    <string name="error_save_task_failed">保存任务失败。</string>
+    <string name="error_refresh_baseline_no_stream">请先连接视频流，再刷新基准帧。</string>
+    <string name="error_refresh_baseline_no_task">请先创建或加载任务，再刷新基准帧。</string>
+    <string name="error_refresh_baseline_failed">刷新基准帧失败。</string>
+
+    <string name="notification_alert_channel_name">告警提醒</string>
+    <string name="notification_alert_channel_description">检测到告警时播放提示音并振动。</string>
+    <string name="notification_warning_channel_name">预警提醒</string>
+    <string name="notification_warning_channel_description">检测到预警时仅振动提醒。</string>
+    <string name="notification_alert_title">告警：%1$s</string>
+    <string name="notification_warning_title">预警：%1$s</string>
+
+    <string name="live_room_live_badge">LIVE</string>
+    <string name="live_room_no_signal">等待画面…</string>
+    <string name="live_room_reconnect">重新连接</string>
+</resources>

@@ -1,0 +1,20 @@
+--- a/CameraWebServer/app_httpd.cpp
++++ b/CameraWebServer/app_httpd.cpp
+@@
+ static esp_err_t device_info_handler(httpd_req_t *req)
+ {
+     String body = String("{\"device_id\":\"") + json_escape(getDeviceId()) +
+-                  "\",\"mode\":\"" + current_wifi_mode() +
++                  "\",\"mode\":\"" + current_wifi_mode() +
++                  "\"" +
+                   ",\"ap_ssid\":\"" + json_escape(getApSsid()) +
+                   "\",\"ap_ip\":\"" + WiFi.softAPIP().toString() +
+                   "\",\"wifi_configured\":" + (hasStoredWifiConfig() ? "true" : "false") +
+                   ",\"sta_ssid\":\"" + json_escape(getStoredWifiSsid()) +
+                   "\",\"ip\":\"" + current_service_ip().toString() +
+                   "\",\"http_port\":80,\"stream_port\":81,\"discovery_port\":" + String(getDiscoveryPort()) +
+                   ",\"mdns\":\"" + json_escape(isMdnsActive() ? getMdnsUrl() : "") +
+                   "\",\"mdns_active\":" + (isMdnsActive() ? "true" : "false") +
+                   ",\"stream_url\":\"" + current_stream_base_url() + "\"}";
+     return send_json(req, "200 OK", body);
+ }
