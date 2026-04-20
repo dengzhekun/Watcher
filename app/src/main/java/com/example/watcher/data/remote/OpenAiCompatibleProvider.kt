@@ -74,7 +74,7 @@ class OpenAiCompatibleProvider(
         val jsonBody = gson.toJson(requestBody)
             .toRequestBody("application/json".toMediaType())
 
-        val url = endpoint.trimEnd('/') + "/chat/completions"
+        val url = endpoint.toChatCompletionsUrl()
 
         val request = Request.Builder()
             .url(url)
@@ -130,4 +130,19 @@ class OpenAiCompatibleProvider(
     private data class ApiChoiceMessage(
         val content: String? = null
     )
+}
+
+private fun String.toChatCompletionsUrl(): String {
+    val trimmed = trim().trimEnd('/')
+    val normalizedBase = trimmed.removeKnownApiSuffix("/chat/completions")
+        .removeKnownApiSuffix("/responses")
+    return "$normalizedBase/chat/completions"
+}
+
+private fun String.removeKnownApiSuffix(suffix: String): String {
+    return if (endsWith(suffix, ignoreCase = true)) {
+        dropLast(suffix.length)
+    } else {
+        this
+    }
 }

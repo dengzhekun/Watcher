@@ -6,8 +6,10 @@
    See https://developer.android.com/about/versions/12/backup-restore
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="database" path="watcher_database" />
+    <exclude domain="database" path="watcher_database-wal" />
+    <exclude domain="database" path="watcher_database-shm" />
+    <exclude domain="sharedpref" path="llm_wallet_prefs.xml" />
+    <exclude domain="sharedpref" path="llm_wallet_secrets.xml" />
+    <exclude domain="file" path="agentframework/" />
 </full-backup-content>

@@ -90,6 +90,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import com.example.watcher.ui.components.ConnectionStatus
 import com.example.watcher.ui.components.MjpegStreamUiState
+import com.example.watcher.ui.components.StreamSource
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharedFlow
 import java.text.SimpleDateFormat
@@ -161,6 +162,11 @@ internal fun LiveRoomScreen(
                     text = when (streamState.connectionStatus) {
                         ConnectionStatus.Connecting -> stringResource(R.string.stream_status_connecting)
                         is ConnectionStatus.Error -> (streamState.connectionStatus as ConnectionStatus.Error).message
+                        ConnectionStatus.Connected -> if (streamState.source == StreamSource.FrontCameraFallback) {
+                            "ESP32 不可用，已切到手机前置摄像头"
+                        } else {
+                            stringResource(R.string.stream_status_receiving)
+                        }
                         else -> stringResource(R.string.live_room_no_signal)
                     },
                     color = Color.White.copy(alpha = 0.5f),
@@ -404,7 +410,12 @@ internal fun LiveRoomScreen(
 
                     if (streamState.connectionStatus is ConnectionStatus.Connected) {
                         Text(
-                            text = stringResource(R.string.stream_fps, streamState.fps),
+                            text = buildString {
+                                append(stringResource(R.string.stream_fps, streamState.fps))
+                                if (streamState.source == StreamSource.FrontCameraFallback) {
+                                    append(" · 前摄降级")
+                                }
+                            },
                             color = Color.White.copy(alpha = 0.7f),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -600,7 +611,11 @@ internal fun LiveRoomScreen(
                 val displayUrl = streamState.activeStreamUrl ?: settings.streamUrl
                 if (displayUrl.isNotBlank()) {
                     Text(
-                        text = displayUrl,
+                        text = if (streamState.source == StreamSource.FrontCameraFallback) {
+                            "当前视频源：$displayUrl"
+                        } else {
+                            displayUrl
+                        },
                         color = Color.White.copy(alpha = 0.3f),
                         fontSize = 10.sp,
                         modifier = Modifier

@@ -67,6 +67,8 @@ internal fun HistoryWorkbenchPage(
     onSelectRecord: (HistoryRecordSelection?) -> Unit,
     onDeleteRecord: (HistoryRecordSelection) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenAgentConfig: () -> Unit,
+    onOpenWalletConfig: () -> Unit,
     currentPage: HubPage,
     isVisible: Boolean,
     pageOffset: Float
@@ -81,7 +83,9 @@ internal fun HistoryWorkbenchPage(
                 subtitle = header.subtitle,
                 currentPage = currentPage,
                 pageOffset = pageOffset,
-                onOpenSettings = onOpenSettings
+                onOpenSettings = onOpenSettings,
+                onOpenAgentConfig = onOpenAgentConfig,
+                onOpenWalletConfig = onOpenWalletConfig
             )
         }
 

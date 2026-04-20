@@ -38,7 +38,13 @@ data class DeviceInfoResponse(
     val discovery_port: Int = 32108,
     val mdns: String = "",
     val mdns_active: Boolean = false,
-    val stream_url: String = ""
+    val stream_url: String = "",
+    val wifi_connect_result: String = "",
+    val wifi_connect_status: Int = 0,
+    val wifi_connect_esp_err: Int = 0,
+    val wifi_disconnect_reason: Int = 0,
+    val wifi_fallback_to_ap: Boolean = false,
+    val wifi_ssid_bytes: Int = 0
 )
 
 data class WifiScanResponse(

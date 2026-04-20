@@ -37,7 +37,8 @@ class MonitorManager(
     private val alertNotifier: AlertNotifier = NoOpAlertNotifier,
     private val historyRepository: HistoryRepository? = null,
     private val snapshotStore: SnapshotStore? = null,
-    private var ledController: LedController? = null
+    private var ledController: LedController? = null,
+    private val llmWalletRepository: LlmWalletRepository
 ) {
     private val tag = "MonitorManager"
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -68,6 +69,9 @@ class MonitorManager(
 
     private val _currentFrame = MutableStateFlow<Bitmap?>(null)
     val currentFrame: StateFlow<Bitmap?> = _currentFrame.asStateFlow()
+
+    val currentStreamUrl: String?
+        get() = currentSettings.streamUrl.takeIf { _currentFrame.value != null }
 
     fun updateSettings(settings: VideoStreamSettings) {
         currentSettings = settings
@@ -109,7 +113,7 @@ class MonitorManager(
         monitorJob = scope.launch {
             while (isActive && _monitorStatus.value.isRunning) {
                 if (!_monitorStatus.value.isPaused) {
-                    performCheck()
+                    performCheckWithWallet()
                 }
 
                 _monitorStatus.value = _monitorStatus.value.copy(
@@ -117,6 +121,68 @@ class MonitorManager(
                 )
                 delay(intervalMs)
             }
+        }
+    }
+
+    private suspend fun performCheckWithWallet() {
+        captureBaselineIfNeeded()
+
+        val llmConfig = runCatching {
+            llmWalletRepository.resolveArkResponsesConfig(ArkConfig.monitorModel)
+        }.getOrElse {
+            recordFailure("未配置全局 LLM 钱包，且 API_KEY 为空。")
+            return
+        }
+
+        val frame = _currentFrame.value
+        if (frame == null) {
+            recordFailure("当前没有可用的视频帧。")
+            return
+        }
+
+        val task = currentTask
+        if (task == null) {
+            recordFailure("当前未加载监控任务。")
+            return
+        }
+
+        val changeScore = lastAnalyzedFrame?.let { calculateFrameChange(it, frame) }
+        if (task.monitorMode == MonitorMode.SceneBaseline &&
+            currentSettings.changeDetectionEnabled &&
+            changeScore != null &&
+            changeScore < currentSettings.changeThresholdPercent
+        ) {
+            _monitorStatus.value = _monitorStatus.value.copy(
+                skippedCount = _monitorStatus.value.skippedCount + 1
+            )
+            addLog(
+                result = _monitorStatus.value.lastResult,
+                message = "已跳过模型调用，场景变化 ${changeScore}%，阈值 ${currentSettings.changeThresholdPercent}%。",
+                action = MonitorLogAction.SKIP
+            )
+            return
+        }
+
+        val eventFramePath = saveEventFrame(frame)
+        if (eventFramePath != null) {
+            _monitorStatus.value = _monitorStatus.value.copy(lastAnalyzedImagePath = eventFramePath)
+        }
+        try {
+            val currentDataUri = encodeCurrentFrame(frame)
+            val response = apiService.analyzeImage(
+                authorization = llmConfig.bearerToken(),
+                request = buildDetectionRequest(task, currentDataUri, llmConfig.modelName)
+            )
+
+            val content = response.extractOutputText()
+                ?: throw IllegalStateException("接口返回内容为空。")
+
+            val decision = ModelOutputParser.parseMonitorDecision(content)
+            lastAnalyzedFrame = snapshotBitmap(frame)
+            applyDecision(decision, eventFramePath)
+        } catch (error: Exception) {
+            Log.e(tag, "Detection failed", error)
+            recordFailure(error.message ?: "监控请求失败。", eventFramePath)
         }
     }
 
@@ -334,7 +400,11 @@ class MonitorManager(
         )
     }
 
-    private fun buildDetectionRequest(task: IntentResult, currentImageDataUri: String): DoubaoImageRequest {
+    private fun buildDetectionRequest(
+        task: IntentResult,
+        currentImageDataUri: String,
+        modelName: String = model
+    ): DoubaoImageRequest {
         val instructions = when (task.monitorMode) {
             MonitorMode.SceneBaseline -> buildSceneBaselineInstructions(task)
             MonitorMode.ReferenceTarget -> buildReferenceTargetInstructions(task)
@@ -364,7 +434,7 @@ class MonitorManager(
         )
         requestContentItems += ImageContentItem(type = "input_image", imageUrl = currentImageDataUri)
         return DoubaoImageRequest(
-            model = model,
+            model = modelName,
             input = listOf(
                 ImageMessage(
                     role = "system",

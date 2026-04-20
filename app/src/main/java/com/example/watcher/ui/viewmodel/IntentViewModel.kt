@@ -11,6 +11,7 @@ import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.watcher.R
+import com.example.watcher.watcherApplication
 import com.example.watcher.data.local.AppDatabase
 import com.example.watcher.data.model.BaselineSource
 import com.example.watcher.data.model.DeviceProvisionUiState
@@ -23,6 +24,7 @@ import com.example.watcher.data.model.MonitorStatus
 import com.example.watcher.data.model.MonitorTask
 import com.example.watcher.data.model.DeviceRuntimeInfo
 import com.example.watcher.data.model.DiscoveredStreamDevice
+import com.example.watcher.data.model.DiscoveredStreamDeviceKind
 import com.example.watcher.data.model.StreamScanUiState
 import com.example.watcher.data.model.TimelineEventEntity
 import com.example.watcher.data.model.VideoProcessTask
@@ -38,7 +40,9 @@ import com.example.watcher.data.model.toMonitorTaskTemplate
 import com.example.watcher.data.model.toVideoTaskTemplate
 import com.example.watcher.data.remote.RetrofitClient
 import com.example.watcher.data.repository.AndroidAlertNotifier
+import com.example.watcher.data.repository.ArkConfig
 import com.example.watcher.data.repository.BitmapEncoding
+import com.example.watcher.data.repository.CouncilExpertRepository
 import com.example.watcher.data.repository.DeviceProvisionCoordinator
 import com.example.watcher.data.repository.HistoryRepository
 import com.example.watcher.data.repository.IntentRepository
@@ -51,6 +55,13 @@ import com.example.watcher.data.repository.TemplateRepository
 import com.example.watcher.data.model.AiAudienceEntity
 import com.example.watcher.data.model.AgentAudienceDebugSnapshot
 import com.example.watcher.data.model.AudienceEngineType
+import com.example.watcher.data.model.CouncilConfig
+import com.example.watcher.data.model.CouncilEntryDraft
+import com.example.watcher.data.model.CouncilEntryUiState
+import com.example.watcher.data.model.CouncilExpertEntity
+import com.example.watcher.data.model.CouncilTemplateEntity
+import com.example.watcher.data.model.CouncilUiState
+import com.example.watcher.data.model.InteractionMode
 import com.example.watcher.data.model.MemorySnapshot
 import com.example.watcher.data.model.AiAudienceLiveState
 import com.example.watcher.data.model.GiftRankEntry
@@ -66,6 +77,10 @@ import com.example.watcher.data.remote.ArkStreamingClient
 import com.example.watcher.data.repository.LiveCommentaryRepository
 import com.example.watcher.data.repository.VideoProcessRepository
 import com.example.watcher.data.repository.agent.AgentAudienceManager
+import com.example.watcher.data.repository.council.CouncilEntryConfigGenerator
+// Gateway imports moved to GatewayDelegate
+import com.example.watcher.data.repository.council.CouncilManager
+import com.example.watcher.data.remote.OpenAiCompatibleProvider
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -83,41 +98,60 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 class IntentViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = getApplication<Application>()
     private val database = AppDatabase.getDatabase(application)
+    private val llmWalletRepository = appContext.watcherApplication().agentFrameworkContainer.llmWalletRepository
     private val repository = IntentRepository(
         apiService = RetrofitClient.doubaoApiService,
-        taskDao = database.monitorTaskDao()
+        taskDao = database.monitorTaskDao(),
+        llmWalletRepository = llmWalletRepository
     )
     val liveCommentaryRepository = LiveCommentaryRepository(
         apiService = RetrofitClient.doubaoApiService,
-        streamingClient = ArkStreamingClient()
+        streamingClient = ArkStreamingClient(),
+        llmWalletRepository = llmWalletRepository
     )
     private val classicAudienceManager = AiAudienceManager(
-        providerDao = database.llmProviderDao(),
+        llmWalletRepository = llmWalletRepository,
         audienceDao = database.aiAudienceDao(),
         messageDao = database.aiAudienceMessageDao(),
         memoryManager = liveCommentaryRepository.memoryManager,
         sceneMemoryManager = liveCommentaryRepository.sceneMemoryManager
     )
     private val agentAudienceManager = AgentAudienceManager(
-        providerDao = database.llmProviderDao(),
+        llmWalletRepository = llmWalletRepository,
         audienceDao = database.aiAudienceDao(),
         messageDao = database.aiAudienceMessageDao(),
         memoryManager = liveCommentaryRepository.memoryManager,
         sceneMemoryManager = liveCommentaryRepository.sceneMemoryManager
     )
+    private val councilManager = CouncilManager(
+        llmWalletRepository = llmWalletRepository,
+        councilExpertDao = database.councilExpertDao(),
+        knowledgeDao = database.councilKnowledgeDao(),
+        messageDao = database.aiAudienceMessageDao(),
+        memoryManager = liveCommentaryRepository.memoryManager,
+        sceneMemoryManager = liveCommentaryRepository.sceneMemoryManager
+    )
     private val audienceTypeCache = MutableStateFlow<Map<Long, AudienceEngineType>>(emptyMap())
+    private val _interactionMode = MutableStateFlow(InteractionMode.Off)
     val liveSpeechManager = LiveSpeechRecognitionManager(
         context = appContext,
         memoryManager = liveCommentaryRepository.memoryManager
     ).also {
         it.onSpeechResult = { text ->
-            classicAudienceManager.onSpeechEvent(text)
-            agentAudienceManager.onSpeechEvent(text)
+            when (_interactionMode.value) {
+                InteractionMode.Live -> {
+                    classicAudienceManager.onSpeechEvent(text)
+                    agentAudienceManager.onSpeechEvent(text)
+                }
+                InteractionMode.Council -> councilManager.onSpeechEvent(text)
+                InteractionMode.Off -> Unit
+            }
         }
     }
     private val videoRepository = VideoProcessRepository(
@@ -125,7 +159,8 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
         taskDao = database.videoProcessTaskDao(),
         runDao = database.videoProcessRunDao(),
         segmentRunDao = database.videoSegmentRunDao(),
-        timelineEventDao = database.timelineEventDao()
+        timelineEventDao = database.timelineEventDao(),
+        llmWalletRepository = llmWalletRepository
     )
     private val historyRepository = HistoryRepository(
         monitorRunDao = database.monitorRunDao(),
@@ -136,13 +171,15 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
         timelineEventDao = database.timelineEventDao()
     )
     private val migrationPreferences = appContext.getSharedPreferences(
-        MIGRATION_PREFERENCES_NAME,
+        "watcher_migrations",
         Context.MODE_PRIVATE
     )
     private val alertNotifier = AndroidAlertNotifier(appContext)
     private val snapshotStore = SnapshotStore(appContext)
     private val lanStreamScanner = LanStreamScanner(appContext)
     private val templateRepository = TemplateRepository(database.templateDao())
+    private val councilExpertRepository = CouncilExpertRepository(database.councilExpertDao())
+    private val councilEntryGenerator = CouncilEntryConfigGenerator()
 
     init {
         viewModelScope.launch {
@@ -156,41 +193,39 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
     private val _currentIntentResult = MutableStateFlow<IntentResult?>(null)
     private val _pendingBaselineImagePath = MutableStateFlow<String?>(null)
     private val _pendingBaselineBase64 = MutableStateFlow<String?>(null)
+    private val _councilEntryUiState = MutableStateFlow(CouncilEntryUiState())
     private val _isStreamPlaying = MutableStateFlow(true)
     private val _streamReconnectToken = MutableStateFlow(0)
-    private val _streamScanUiState = MutableStateFlow(StreamScanUiState())
-    private val _deviceProvisionUiState = MutableStateFlow(DeviceProvisionUiState())
-    private val _settingsNotice = MutableStateFlow<String?>(null)
+    // Device state delegated to DeviceDelegate
     private val _videoPlanUiState = MutableStateFlow<VideoPlanUiState>(VideoPlanUiState.Idle)
     private val _currentVideoTask = MutableStateFlow<VideoProcessTaskDraft?>(null)
     private val _videoProcessingStatus = MutableStateFlow(VideoProcessingStatus())
     private val _selectedVideoRunId = MutableStateFlow<Long?>(null)
     private val _selectedVideoRunEvents = MutableStateFlow<List<TimelineEventEntity>>(emptyList())
-    private val _selectedHistoryRecord = MutableStateFlow<HistoryRecordSelection?>(null)
-    private val _selectedHistoryDetail = MutableStateFlow<HistoryRecordDetail?>(null)
+    // History state delegated to HistoryDelegate
 
     private var lastPersistedCheckTime = 0L
-    private var streamScanJob: Job? = null
-    private var deviceProvisionJob: Job? = null
+    // streamScanJob and deviceProvisionJob moved to DeviceDelegate
     private var videoProcessingJob: Job? = null
     private var videoStopRequested = AtomicBoolean(false)
 
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
+    val interactionMode: StateFlow<InteractionMode> = _interactionMode.asStateFlow()
     val currentIntentResult: StateFlow<IntentResult?> = _currentIntentResult.asStateFlow()
     val pendingBaselineImagePath: StateFlow<String?> = _pendingBaselineImagePath.asStateFlow()
     val pendingBaselineBase64: StateFlow<String?> = _pendingBaselineBase64.asStateFlow()
     val isStreamPlaying: StateFlow<Boolean> = _isStreamPlaying.asStateFlow()
     val streamReconnectToken: StateFlow<Int> = _streamReconnectToken.asStateFlow()
-    val streamScanUiState: StateFlow<StreamScanUiState> = _streamScanUiState.asStateFlow()
-    val deviceProvisionUiState: StateFlow<DeviceProvisionUiState> = _deviceProvisionUiState.asStateFlow()
-    val settingsNotice: StateFlow<String?> = _settingsNotice.asStateFlow()
+    val streamScanUiState: StateFlow<StreamScanUiState> get() = deviceDelegate.streamScanUiState
+    val deviceProvisionUiState: StateFlow<DeviceProvisionUiState> get() = deviceDelegate.deviceProvisionUiState
+    val settingsNotice: StateFlow<String?> get() = deviceDelegate.settingsNotice
     val videoPlanUiState: StateFlow<VideoPlanUiState> = _videoPlanUiState.asStateFlow()
     val currentVideoTask: StateFlow<VideoProcessTaskDraft?> = _currentVideoTask.asStateFlow()
     val videoProcessingStatus: StateFlow<VideoProcessingStatus> = _videoProcessingStatus.asStateFlow()
     val selectedVideoRunId: StateFlow<Long?> = _selectedVideoRunId.asStateFlow()
     val selectedVideoRunEvents: StateFlow<List<TimelineEventEntity>> = _selectedVideoRunEvents.asStateFlow()
-    val selectedHistoryRecord: StateFlow<HistoryRecordSelection?> = _selectedHistoryRecord.asStateFlow()
-    val selectedHistoryDetail: StateFlow<HistoryRecordDetail?> = _selectedHistoryDetail.asStateFlow()
+    val selectedHistoryRecord: StateFlow<HistoryRecordSelection?> get() = historyDelegate.selectedHistoryRecord
+    val selectedHistoryDetail: StateFlow<HistoryRecordDetail?> get() = historyDelegate.selectedHistoryDetail
 
     val tasksFlow = repository.observeTasks()
     val videoTasksFlow = videoRepository.observeTasks()
@@ -200,14 +235,59 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
     val videoStreamSettings = database.videoStreamSettingsDao().getSettings()
     val monitorTemplatesFlow = templateRepository.monitorTemplates
     val videoTemplatesFlow = templateRepository.videoTemplates
+    val councilTemplatesFlow = templateRepository.councilTemplates
+    val councilExpertsFlow = councilExpertRepository.experts
 
     val monitorManager = MonitorManager(
         apiService = RetrofitClient.doubaoApiService,
         alertNotifier = alertNotifier,
         historyRepository = historyRepository,
-        snapshotStore = snapshotStore
+        snapshotStore = snapshotStore,
+        llmWalletRepository = llmWalletRepository
     )
     private val streamDeviceCoordinator = StreamDeviceCoordinator(monitorManager)
+    private val deviceDelegate = DeviceDelegate(
+        scope = viewModelScope,
+        settingsDao = database.videoStreamSettingsDao(),
+        lanStreamScanner = lanStreamScanner,
+        streamDeviceCoordinator = streamDeviceCoordinator,
+        migrationPreferences = migrationPreferences,
+        onReconnectStream = ::reconnectStream
+    )
+    private val templateDelegate = TemplateDelegate(
+        scope = viewModelScope,
+        templateRepository = templateRepository,
+        templateDao = database.templateDao(),
+        councilExpertRepository = councilExpertRepository
+    )
+    private val historyDelegate = HistoryDelegate(
+        scope = viewModelScope,
+        historyRepository = historyRepository,
+        videoRepository = videoRepository,
+        selectedVideoRunId = _selectedVideoRunId,
+        selectedVideoRunEvents = _selectedVideoRunEvents
+    )
+    // ── Gateway delegation ────────────────────────────────────
+    private val gatewayDelegate = GatewayDelegate(
+        scope = viewModelScope,
+        appContext = appContext,
+        monitorManager = monitorManager,
+        intentRepository = repository,
+        historyRepository = historyRepository,
+        videoRepository = videoRepository,
+        agentService = appContext.watcherApplication().agentFrameworkContainer.service,
+        liveCommentaryRepository = liveCommentaryRepository,
+        liveSpeechManager = liveSpeechManager,
+        streamUrlProvider = { monitorManager.currentStreamUrl },
+        onStreamRelease = { _isStreamPlaying.value = false },
+        onStreamReclaim = { reconnectStream() }
+    )
+    val gatewayRunning: StateFlow<Boolean> get() = gatewayDelegate.running
+    val gatewayApiKey: String get() = gatewayDelegate.apiKey
+    val gatewayPort: Int get() = gatewayDelegate.port
+    fun toggleGateway(enabled: Boolean) = gatewayDelegate.toggle(enabled)
+    fun getLocalIpAddress(): String = gatewayDelegate.getLocalIpAddress()
+
     val monitorStatus: StateFlow<MonitorStatus> get() = monitorManager.monitorStatus
     val monitorLogs: StateFlow<List<MonitorLogEntry>> get() = monitorManager.monitorLogs
 
@@ -215,8 +295,7 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
         initializeVideoSettings()
         observeVideoSettings()
         observeMonitorStatusPersistence()
-        observeSelectedVideoRunEvents()
-        observeSelectedHistoryDetail()
+        historyDelegate.startObserving()
     }
 
     fun analyzeIntent(userInput: String) {
@@ -445,21 +524,13 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun updateMonitorTemplate(entity: MonitorTemplateEntity) {
-        viewModelScope.launch { templateRepository.updateMonitorTemplate(entity) }
-    }
-
-    fun updateVideoTemplate(entity: VideoTemplateEntity) {
-        viewModelScope.launch { templateRepository.updateVideoTemplate(entity) }
-    }
-
-    fun resetMonitorTemplate(templateId: String) {
-        viewModelScope.launch { templateRepository.resetMonitorTemplate(templateId) }
-    }
-
-    fun resetVideoTemplate(templateId: String) {
-        viewModelScope.launch { templateRepository.resetVideoTemplate(templateId) }
-    }
+    // ── Template delegation ─────────────────────────────────────
+    fun updateMonitorTemplate(entity: MonitorTemplateEntity) = templateDelegate.updateMonitorTemplate(entity)
+    fun updateVideoTemplate(entity: VideoTemplateEntity) = templateDelegate.updateVideoTemplate(entity)
+    fun updateCouncilTemplate(entity: CouncilTemplateEntity) = templateDelegate.updateCouncilTemplate(entity)
+    fun resetMonitorTemplate(templateId: String) = templateDelegate.resetMonitorTemplate(templateId)
+    fun resetVideoTemplate(templateId: String) = templateDelegate.resetVideoTemplate(templateId)
+    fun resetCouncilTemplate(templateId: String) = templateDelegate.resetCouncilTemplate(templateId)
 
     fun deleteTask(id: Long) {
         viewModelScope.launch {
@@ -590,211 +661,20 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    fun selectHistoryRecord(selection: HistoryRecordSelection?) {
-        _selectedHistoryRecord.value = selection
-    }
+    // ── History delegation ──────────────────────────────────────
+    fun selectHistoryRecord(selection: HistoryRecordSelection?) = historyDelegate.selectHistoryRecord(selection)
+    fun deleteHistoryRecord(selection: HistoryRecordSelection) = historyDelegate.deleteHistoryRecord(selection)
 
-    fun deleteHistoryRecord(selection: HistoryRecordSelection) {
-        viewModelScope.launch {
-            val detail = _selectedHistoryDetail.value
-            if (detail?.selection == selection && !detail.canDelete) {
-                return@launch
-            }
-
-            historyRepository.deleteHistoryRecord(selection)
-            if (_selectedHistoryRecord.value == selection) {
-                _selectedHistoryRecord.value = null
-                _selectedHistoryDetail.value = null
-            }
-            if (selection.type == HistoryRecordType.VideoAnalysis &&
-                _selectedVideoRunId.value == selection.recordId
-            ) {
-                _selectedVideoRunId.value = null
-                _selectedVideoRunEvents.value = emptyList()
-            }
-        }
-    }
-
-    fun saveVideoStreamSettings(settings: VideoStreamSettings) {
-        viewModelScope.launch {
-            val normalized = settings.normalized()
-            if (normalized.deviceProfile == VideoStreamSettings.DEVICE_PROFILE_MJPEG_ONLY) {
-                _settingsNotice.value = "Generic MJPEG mode skips light and camera control commands."
-            }
-            database.videoStreamSettingsDao().insert(normalized)
-            reconnectStream()
-        }
-    }
-
-    fun refreshDeviceProvisionInfo() {
-        launchDeviceProvisionAction(
-            loadingState = { current ->
-                current.copy(
-                    isLoadingInfo = true,
-                    isWaitingForReconnect = false,
-                    isFindingProvisionedDevice = false,
-                    errorMessage = null,
-                    statusMessage = "Loading device status..."
-                )
-            }
-        ) { coordinator ->
-            val info = coordinator.fetchDeviceInfo()
-            val currentSettings = database.videoStreamSettingsDao().getSettingsSync() ?: VideoStreamSettings()
-            val updatedSettings = currentSettings.copy(
-                ipAddress = info.ip.ifBlank { currentSettings.ipAddress },
-                preferredWifiSsid = info.staSsid.ifBlank { currentSettings.preferredWifiSsid }
-            ).normalized()
-            database.videoStreamSettingsDao().insert(updatedSettings)
-            _deviceProvisionUiState.value = _deviceProvisionUiState.value.copy(
-                isLoadingInfo = false,
-                deviceInfo = info,
-                statusMessage = if (info.isApMode) {
-                    "Device is in hotspot provisioning mode. Submit target Wi-Fi first."
-                } else {
-                    "Device is on ${info.staSsid.ifBlank { "external Wi-Fi" }} at ${info.ip}."
-                },
-                errorMessage = null
-            )
-        }
-    }
-
-    fun scanProvisioningWifi() {
-        launchDeviceProvisionAction(
-            loadingState = { current ->
-                current.copy(
-                    isScanningWifi = true,
-                    isWaitingForReconnect = false,
-                    isFindingProvisionedDevice = false,
-                    errorMessage = null,
-                    statusMessage = "Scanning nearby Wi-Fi networks..."
-                )
-            }
-        ) { coordinator ->
-            val networks = coordinator.scanWifiNetworks()
-            _deviceProvisionUiState.value = _deviceProvisionUiState.value.copy(
-                isScanningWifi = false,
-                wifiNetworks = networks,
-                statusMessage = if (networks.isEmpty()) {
-                    "No Wi-Fi networks were found by the device."
-                } else {
-                    "Found ${networks.size} Wi-Fi networks. Tap one to fill it in."
-                },
-                errorMessage = null
-            )
-        }
-    }
-
-    fun submitProvisioningWifi(ssid: String, password: String) {
-        launchDeviceProvisionAction(
-            loadingState = { current ->
-                current.copy(
-                    isSubmittingWifi = true,
-                    isWaitingForReconnect = false,
-                    isFindingProvisionedDevice = false,
-                    errorMessage = null,
-                    statusMessage = "Saving Wi-Fi settings to the device..."
-                )
-            }
-        ) { coordinator ->
-            val expectedDeviceId = _deviceProvisionUiState.value.deviceInfo?.deviceId
-            val notice = coordinator.saveWifiConfig(ssid = ssid, password = password)
-            _deviceProvisionUiState.value = _deviceProvisionUiState.value.copy(
-                isSubmittingWifi = false,
-                isWaitingForReconnect = true,
-                statusMessage = notice,
-                errorMessage = null
-            )
-            _settingsNotice.value = notice
-            awaitProvisionedDeviceReconnect(
-                expectedDeviceId = expectedDeviceId,
-                targetWifiSsid = ssid.trim()
-            )
-        }
-    }
-
-    fun clearProvisionedWifi() {
-        launchDeviceProvisionAction(
-            loadingState = { current ->
-                current.copy(
-                    isClearingWifi = true,
-                    isWaitingForReconnect = false,
-                    isFindingProvisionedDevice = false,
-                    errorMessage = null,
-                    statusMessage = "Clearing saved Wi-Fi from the device..."
-                )
-            }
-        ) { coordinator ->
-            val notice = coordinator.clearWifiConfig()
-            val currentSettings = database.videoStreamSettingsDao().getSettingsSync() ?: VideoStreamSettings()
-            database.videoStreamSettingsDao().insert(
-                currentSettings.copy(
-                    ipAddress = VideoStreamSettings.DEFAULT_DEVICE_IP,
-                    preferredWifiSsid = ""
-                ).normalized()
-            )
-            _deviceProvisionUiState.value = DeviceProvisionUiState(
-                statusMessage = notice
-            )
-            _settingsNotice.value = notice
-        }
-    }
-
-    fun scanVideoStreamDevices() {
-        streamScanJob?.cancel()
-        streamScanJob = viewModelScope.launch {
-            val currentSettings = database.videoStreamSettingsDao().getSettingsSync() ?: VideoStreamSettings()
-            val discoveredDevices = linkedMapOf<String, DiscoveredStreamDevice>()
-            _streamScanUiState.value = StreamScanUiState(
-                isScanning = true,
-                statusMessage = "Scanning the current LAN for video devices..."
-            )
-
-            try {
-                val summary = lanStreamScanner.scan(preferredPort = currentSettings.port) { device ->
-                    discoveredDevices[device.host] = device
-                    _streamScanUiState.value = StreamScanUiState(
-                        isScanning = true,
-                        devices = sortDiscoveredDevices(discoveredDevices.values.toList()),
-                        statusMessage = "Scanning... ${discoveredDevices.size} candidates found."
-                    )
-                }
-
-                val devices = sortDiscoveredDevices(discoveredDevices.values.toList())
-                _streamScanUiState.value = StreamScanUiState(
-                    isScanning = false,
-                    devices = devices,
-                    statusMessage = if (devices.isEmpty()) {
-                        "No video stream was found on ${summary.subnetLabel}. You can still enter an address manually."
-                    } else {
-                        "Found ${devices.size} candidates on ${summary.subnetLabel}. Pick one and save settings."
-                    }
-                )
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (error: Exception) {
-                _streamScanUiState.value = StreamScanUiState(
-                    isScanning = false,
-                    errorMessage = error.message ?: "Failed to scan for devices. Try again later."
-                )
-            }
-        }
-    }
-
-    fun clearStreamDeviceScan() {
-        streamScanJob?.cancel()
-        streamScanJob = null
-        _streamScanUiState.value = StreamScanUiState()
-    }
-
-    fun clearDeviceProvisionState() {
-        deviceProvisionJob?.cancel()
-        deviceProvisionJob = null
-        _deviceProvisionUiState.value = DeviceProvisionUiState()
-    }
-
-    fun consumeSettingsNotice() {
-        _settingsNotice.value = null
-    }
+    // ── Device delegation ───────────────────────────────────────
+    fun saveVideoStreamSettings(settings: VideoStreamSettings) = deviceDelegate.saveVideoStreamSettings(settings)
+    fun refreshDeviceProvisionInfo() = deviceDelegate.refreshDeviceProvisionInfo()
+    fun scanProvisioningWifi() = deviceDelegate.scanProvisioningWifi()
+    fun submitProvisioningWifi(ssid: String, password: String) = deviceDelegate.submitProvisioningWifi(ssid, password)
+    fun clearProvisionedWifi() = deviceDelegate.clearProvisionedWifi()
+    fun scanVideoStreamDevices() = deviceDelegate.scanVideoStreamDevices()
+    fun clearStreamDeviceScan() = deviceDelegate.clearStreamDeviceScan()
+    fun clearDeviceProvisionState() = deviceDelegate.clearDeviceProvisionState()
+    fun consumeSettingsNotice() = deviceDelegate.consumeSettingsNotice()
 
     fun saveSnapshot(bitmap: android.graphics.Bitmap): String? {
         return snapshotStore.save(bitmap)?.also(monitorManager::attachSnapshot)
@@ -809,7 +689,8 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
         android.util.Log.d("LiveCommentary", "ViewModel.startLiveCommentary, currentFrame=${monitorManager.currentFrame.value != null}")
         liveCommentaryRepository.startCommentary(
             outputRoot = appContext.filesDir,
-            latestFrameProvider = { monitorManager.currentFrame.value }
+            latestFrameProvider = { monitorManager.currentFrame.value },
+            speechProvider = { liveSpeechManager.getFinalTranscripts() }
         )
     }
 
@@ -818,7 +699,9 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
         liveCommentaryRepository.stopCommentary()
         classicAudienceManager.stop()
         agentAudienceManager.stop()
+        councilManager.stop()
         liveSpeechManager.stop()
+        _interactionMode.value = InteractionMode.Off
     }
 
     // --- AI Audience ---
@@ -844,6 +727,9 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
     )
 
     fun startAiAudience() {
+        if (_interactionMode.value == InteractionMode.Council) {
+            councilManager.stop()
+        }
         classicAudienceManager.start(
             frameProvider = { monitorManager.currentFrame.value },
             speechProvider = { liveSpeechManager.getFinalTranscripts() }
@@ -852,6 +738,7 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
             frameProvider = { monitorManager.currentFrame.value },
             speechProvider = { liveSpeechManager.getFinalTranscripts() }
         )
+        _interactionMode.value = InteractionMode.Live
     }
 
     fun stopAiAudience() {
@@ -859,6 +746,9 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
         agentAudienceManager.compressMemories()
         classicAudienceManager.stop()
         agentAudienceManager.stop()
+        if (_interactionMode.value == InteractionMode.Live) {
+            _interactionMode.value = InteractionMode.Off
+        }
     }
 
     // --- Live Speech ---
@@ -866,12 +756,142 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
     val liveSpeechState: StateFlow<LiveSpeechState>
         get() = liveSpeechManager.state
 
+    val councilState: StateFlow<CouncilUiState>
+        get() = councilManager.state
+
+    val councilEntryUiState: StateFlow<CouncilEntryUiState>
+        get() = _councilEntryUiState.asStateFlow()
+
     fun startLiveSpeech() {
         liveSpeechManager.start()
     }
 
     fun stopLiveSpeech() {
         liveSpeechManager.stop()
+    }
+
+    fun startCouncilMode(config: CouncilConfig) {
+        stopAiAudience()
+        _interactionMode.value = InteractionMode.Council
+        startLiveCommentary()
+        startLiveSpeech()
+        councilManager.start(
+            frameProvider = { monitorManager.currentFrame.value },
+            speechProvider = { liveSpeechManager.getFinalTranscripts() },
+            initialConfig = config
+        )
+    }
+
+    fun updateCouncilConfig(config: CouncilConfig) {
+        councilManager.updateConfig(config)
+    }
+
+    fun triggerCouncilAnalysis(reason: String = "manual") {
+        councilManager.triggerAnalysis(reason)
+    }
+
+    fun stopCouncilMode() {
+        councilManager.stop()
+        liveSpeechManager.stop()
+        liveCommentaryRepository.stopCommentary()
+        _interactionMode.value = InteractionMode.Off
+    }
+
+    fun updateCouncilEntryDraft(draft: CouncilEntryDraft) {
+        _councilEntryUiState.value = _councilEntryUiState.value.copy(
+            draft = draft,
+            errorMessage = null,
+            statusMessage = null
+        )
+    }
+
+    fun applyCouncilEntryTemplate(templateId: String) {
+        viewModelScope.launch {
+            val template = templateRepository.getCouncilTemplate(templateId) ?: return@launch
+            val generated = councilEntryGenerator.fromTemplate(template)
+            _councilEntryUiState.value = CouncilEntryUiState(
+                draft = CouncilEntryDraft(
+                    scene = generated.config.sceneType.name,
+                    userNeed = generated.config.objective,
+                    concern = generated.config.focus,
+                    sourceTemplateId = templateId
+                ),
+                generated = generated,
+                statusMessage = "模板已加载到智囊团简报中。"
+            )
+        }
+    }
+
+    fun resetCouncilEntryDraft() {
+        _councilEntryUiState.value = CouncilEntryUiState()
+    }
+
+    fun generateCouncilEntryConfig(draft: CouncilEntryDraft) {
+        viewModelScope.launch {
+            if (!draft.canGenerate()) {
+                _councilEntryUiState.value = _councilEntryUiState.value.copy(
+                    errorMessage = "请至少填写一项场景信息后再生成。",
+                    statusMessage = null
+                )
+                return@launch
+            }
+
+            _councilEntryUiState.value = _councilEntryUiState.value.copy(
+                draft = draft,
+                isGenerating = true,
+                errorMessage = null,
+                statusMessage = "正在生成智囊团配置…"
+            )
+
+            val templates = templateRepository.councilTemplatesFirstSnapshot()
+            val experts = database.councilExpertDao().getAll()
+            try {
+                val provider = llmWalletRepository.resolveOpenAiProvider(ArkConfig.intentModel)
+                val generated = councilEntryGenerator.generate(
+                    provider = provider,
+                    draft = draft,
+                    templates = templates,
+                    availableExperts = experts
+                )
+                _councilEntryUiState.value = _councilEntryUiState.value.copy(
+                    isGenerating = false,
+                    generated = generated,
+                    errorMessage = null,
+                    statusMessage = "智囊团配置已就绪。"
+                )
+            } catch (e: Exception) {
+                _councilEntryUiState.value = _councilEntryUiState.value.copy(
+                    isGenerating = false,
+                    errorMessage = "生成失败：${e.message ?: "未知错误"}",
+                    statusMessage = null
+                )
+            }
+        }
+    }
+
+    fun saveGeneratedCouncilTemplate(label: String) {
+        val generated = _councilEntryUiState.value.generated ?: return
+        val finalLabel = label.trim().ifBlank { generated.title }
+        viewModelScope.launch {
+            templateRepository.updateCouncilTemplate(
+                CouncilTemplateEntity(
+                    templateId = "generated_${UUID.randomUUID().toString().take(8)}",
+                    label = finalLabel,
+                    description = generated.summary,
+                    sceneType = generated.config.sceneType.name,
+                    objective = generated.config.objective,
+                    focus = generated.config.focus,
+                    speakerRole = generated.config.speakerRole,
+                    targetRole = generated.config.targetRole,
+                    background = generated.config.background,
+                    isDefault = false
+                )
+            )
+            _councilEntryUiState.value = _councilEntryUiState.value.copy(
+                statusMessage = "Council template saved.",
+                errorMessage = null
+            )
+        }
     }
 
     fun resetLiveRoom() {
@@ -886,6 +906,7 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
             // Full reset AI audience (clears all debug/session data too)
             classicAudienceManager.fullReset()
             agentAudienceManager.fullReset()
+            councilManager.stop()
             classicAudienceManager.start(
                 frameProvider = { monitorManager.currentFrame.value },
                 speechProvider = { liveSpeechManager.getFinalTranscripts() }
@@ -894,6 +915,7 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
                 frameProvider = { monitorManager.currentFrame.value },
                 speechProvider = { liveSpeechManager.getFinalTranscripts() }
             )
+            _interactionMode.value = InteractionMode.Live
             android.util.Log.d("LiveRoom", "All context reset")
         }
     }
@@ -902,19 +924,43 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
         liveSpeechManager.setMicEnabled(enabled)
     }
 
-    val llmProvidersFlow get() = database.llmProviderDao().observeAll()
+    val llmProvidersFlow get() = llmWalletRepository.observeProviders()
     val aiAudiencesFlow get() = database.aiAudienceDao().observeAll()
 
     fun saveProvider(provider: LlmProviderEntity) {
-        viewModelScope.launch { database.llmProviderDao().upsert(provider) }
+        viewModelScope.launch { llmWalletRepository.upsertProvider(provider, makeDefault = true) }
     }
 
     fun deleteProvider(id: String) {
-        viewModelScope.launch { database.llmProviderDao().deleteById(id) }
+        viewModelScope.launch { llmWalletRepository.deleteProvider(id) }
     }
 
     fun saveAudience(audience: AiAudienceEntity) {
         viewModelScope.launch { database.aiAudienceDao().upsert(audience) }
+    }
+
+    fun saveCouncilExpert(expert: CouncilExpertEntity) {
+        viewModelScope.launch { councilExpertRepository.updateExpert(expert) }
+    }
+
+    fun addCouncilExpert() {
+        viewModelScope.launch { councilExpertRepository.createExpert() }
+    }
+
+    fun duplicateCouncilExpert(expert: CouncilExpertEntity) {
+        viewModelScope.launch { councilExpertRepository.duplicateExpert(expert) }
+    }
+
+    fun resetCouncilExpert(expertId: String) {
+        viewModelScope.launch { councilExpertRepository.resetExpert(expertId) }
+    }
+
+    fun deleteCouncilExpert(expertId: String) {
+        viewModelScope.launch { councilExpertRepository.deleteExpert(expertId) }
+    }
+
+    fun restoreMissingCouncilExperts() {
+        viewModelScope.launch { councilExpertRepository.restoreMissingSystemPresets() }
     }
 
     fun deleteAudience(id: Long) {
@@ -923,40 +969,14 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
 
     // --- Template Share/Import ---
 
-    fun deleteMonitorTemplate(templateId: String) {
-        viewModelScope.launch { database.templateDao().deleteMonitorTemplate(templateId) }
-    }
-
-    fun deleteVideoTemplate(templateId: String) {
-        viewModelScope.launch { database.templateDao().deleteVideoTemplate(templateId) }
-    }
-
-    fun exportMonitorTemplate(template: MonitorTemplateEntity): String =
-        TemplateShareManager.exportMonitorTemplate(template)
-
-    fun exportVideoTemplate(template: VideoTemplateEntity): String =
-        TemplateShareManager.exportVideoTemplate(template)
-
-    fun importTemplate(text: String, onResult: (String) -> Unit) {
-        viewModelScope.launch {
-            TemplateShareManager.importTemplate(text)
-                .onSuccess { result ->
-                    when {
-                        result.monitorTemplate != null -> {
-                            database.templateDao().upsertMonitor(result.monitorTemplate)
-                            onResult("监控模板「${result.label}」导入成功")
-                        }
-                        result.videoTemplate != null -> {
-                            database.templateDao().upsertVideo(result.videoTemplate)
-                            onResult("视频分析模板「${result.label}」导入成功")
-                        }
-                    }
-                }
-                .onFailure { e ->
-                    onResult("导入失败: ${e.message}")
-                }
-        }
-    }
+    fun deleteMonitorTemplate(templateId: String) = templateDelegate.deleteMonitorTemplate(templateId)
+    fun deleteVideoTemplate(templateId: String) = templateDelegate.deleteVideoTemplate(templateId)
+    fun deleteCouncilTemplate(templateId: String) = templateDelegate.deleteCouncilTemplate(templateId)
+    fun exportMonitorTemplate(template: MonitorTemplateEntity): String = templateDelegate.exportMonitorTemplate(template)
+    fun exportVideoTemplate(template: VideoTemplateEntity): String = templateDelegate.exportVideoTemplate(template)
+    fun exportCouncilTemplate(template: CouncilTemplateEntity): String = templateDelegate.exportCouncilTemplate(template)
+    fun exportCouncilExpertTemplate(expert: CouncilExpertEntity): String = templateDelegate.exportCouncilExpertTemplate(expert)
+    fun importTemplate(text: String, onResult: (String) -> Unit) = templateDelegate.importTemplate(text, onResult)
 
     // --- Management / Debug ---
     fun getAudienceLastPost(audienceId: Long): String? =
@@ -989,10 +1009,37 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
+    fun getCouncilExpertLastPrompt(expertId: String): String? =
+        councilManager.getLastPrompt(expertId)
+
+    fun getCouncilExpertLastResponse(expertId: String): String? =
+        councilManager.getLastResponse(expertId)
+
+    fun getCouncilExpertSessionMemory(expertId: String): List<String> =
+        councilManager.getSessionMemory(expertId)
+
+    suspend fun getExpertKnowledge(expertId: String): List<com.example.watcher.data.model.CouncilKnowledgeEntity> {
+        val dao = database.councilKnowledgeDao()
+        // Expert's own calibration + any user_profile entries + session facts attributed to this expert
+        val calibration = dao.getExpertCalibration(expertId, limit = 10)
+        val userProfile = dao.getUserProfile(limit = 5)
+        val bySource = dao.getBySource(expertId, limit = 5)
+        return (calibration + userProfile + bySource)
+            .distinctBy { it.id }
+            .sortedByDescending { it.relevance }
+            .take(20)
+    }
+
+    fun deleteKnowledgeEntry(id: Long) {
+        viewModelScope.launch {
+            database.councilKnowledgeDao().deleteById(id)
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
-        deviceProvisionJob?.cancel()
-        streamScanJob?.cancel()
+        gatewayDelegate.release()
+        deviceDelegate.release()
         videoStopRequested.set(true)
         videoProcessingJob?.cancel()
         monitorManager.release()
@@ -1000,6 +1047,7 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
         liveCommentaryRepository.release()
         classicAudienceManager.release()
         agentAudienceManager.release()
+        councilManager.release()
         liveSpeechManager.release()
     }
 
@@ -1063,23 +1111,12 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
             agentAudienceManager.setInitialBudget(audienceId, budget)
     }
 
-    private fun initializeVideoSettings() {
-        viewModelScope.launch {
-            val settingsDao = database.videoStreamSettingsDao()
-            val currentSettings = settingsDao.getSettingsSync()
-            if (currentSettings == null) {
-                settingsDao.insert(VideoStreamSettings())
-            } else {
-                migrateChangeDetectionDefaultsIfNeeded(currentSettings)
-                migrateResolutionDefaultsIfNeeded(currentSettings)
-            }
-        }
-    }
+    private fun initializeVideoSettings() = deviceDelegate.initializeVideoSettings()
 
     private fun observeVideoSettings() {
         viewModelScope.launch {
             videoStreamSettings.collect { settings ->
-                settings?.let { applySettings(it) }
+                settings?.let { deviceDelegate.applySettings(it) }
             }
         }
     }
@@ -1100,37 +1137,7 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun observeSelectedVideoRunEvents() {
-        viewModelScope.launch {
-            _selectedVideoRunId
-                .flatMapLatest { runId ->
-                    if (runId == null) {
-                        flowOf(emptyList())
-                    } else {
-                        videoRepository.observeTimelineForRun(runId)
-                    }
-                }
-                .collect { events ->
-                    _selectedVideoRunEvents.value = events
-                }
-        }
-    }
-
-    private fun observeSelectedHistoryDetail() {
-        viewModelScope.launch {
-            _selectedHistoryRecord
-                .flatMapLatest { selection ->
-                    if (selection == null) {
-                        flowOf(null)
-                    } else {
-                        historyRepository.observeHistoryDetail(selection)
-                    }
-                }
-                .collect { detail ->
-                    _selectedHistoryDetail.value = detail
-                }
-        }
-    }
+    // observeSelectedVideoRunEvents and observeSelectedHistoryDetail moved to HistoryDelegate
 
     private fun showMonitorIntentResult(result: IntentResult) {
         _currentIntentResult.value = result
@@ -1415,179 +1422,7 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    private suspend fun applySettings(settings: VideoStreamSettings) {
-        runCatching { streamDeviceCoordinator.applySettings(settings) }
-            .onSuccess { outcome ->
-                outcome.persistedSettings?.let { database.videoStreamSettingsDao().insert(it) }
-                if (!outcome.notice.isNullOrBlank()) {
-                    _settingsNotice.value = outcome.notice
-                }
-            }
-            .onFailure { error ->
-                if (!isDeviceProvisionFlowBusy()) {
-                    _settingsNotice.value = error.message ?: "Device connection failed."
-                }
-            }
-    }
-
-    private fun isDeviceProvisionFlowBusy(): Boolean {
-        val state = _deviceProvisionUiState.value
-        return state.isLoadingInfo ||
-            state.isScanningWifi ||
-            state.isSubmittingWifi ||
-            state.isClearingWifi ||
-            state.isWaitingForReconnect ||
-            state.isFindingProvisionedDevice
-    }
-
-    private fun launchDeviceProvisionAction(
-        loadingState: (DeviceProvisionUiState) -> DeviceProvisionUiState,
-        action: suspend (DeviceProvisionCoordinator) -> Unit
-    ) {
-        deviceProvisionJob?.cancel()
-        deviceProvisionJob = viewModelScope.launch {
-            _deviceProvisionUiState.value = loadingState(_deviceProvisionUiState.value)
-            try {
-                action(createDeviceProvisionCoordinator())
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (error: Exception) {
-                _deviceProvisionUiState.value = _deviceProvisionUiState.value.copy(
-                    isLoadingInfo = false,
-                    isScanningWifi = false,
-                    isSubmittingWifi = false,
-                    isClearingWifi = false,
-                    isWaitingForReconnect = false,
-                    isFindingProvisionedDevice = false,
-                    errorMessage = error.message ?: "Device provisioning failed.",
-                    statusMessage = null
-                )
-            }
-        }
-    }
-
-    private suspend fun awaitProvisionedDeviceReconnect(
-        expectedDeviceId: String?,
-        targetWifiSsid: String
-    ) {
-        delay(PROVISIONING_RESTART_GRACE_PERIOD_MS)
-        _deviceProvisionUiState.value = _deviceProvisionUiState.value.copy(
-            isWaitingForReconnect = false,
-            isFindingProvisionedDevice = true,
-            statusMessage = "The device is restarting. Switch the phone back to the same LAN and the app will find its new IP automatically.",
-            errorMessage = null
-        )
-
-        val discoveredDevice = withTimeoutOrNull(PROVISIONING_REDISCOVERY_TIMEOUT_MS) {
-            while (true) {
-                val currentSettings = database.videoStreamSettingsDao().getSettingsSync() ?: VideoStreamSettings()
-                val knownMdnsUrl = _deviceProvisionUiState.value.deviceInfo?.mdnsUrl
-                val found = lanStreamScanner.rediscoverProvisionedDevice(
-                    settings = currentSettings,
-                    expectedDeviceId = expectedDeviceId,
-                    knownMdnsUrl = knownMdnsUrl
-                )
-                if (found != null) {
-                    return@withTimeoutOrNull found
-                }
-
-                _deviceProvisionUiState.value = _deviceProvisionUiState.value.copy(
-                    statusMessage = "Waiting for the phone to return to the target LAN, then searching for the device's new IP..."
-                )
-                delay(PROVISIONING_REDISCOVERY_RETRY_MS)
-            }
-        } as DiscoveredStreamDevice?
-
-        if (discoveredDevice == null) {
-            _deviceProvisionUiState.value = _deviceProvisionUiState.value.copy(
-                isFindingProvisionedDevice = false,
-                errorMessage = "Wi-Fi was sent to the device, but its new IP was not found yet. Reconnect the phone to the target LAN and try reading device status again.",
-                statusMessage = null
-            )
-            return
-        }
-
-        val updatedSettings = persistProvisionedDevice(discoveredDevice, targetWifiSsid)
-        reconnectStream()
-
-        val refreshedInfo = runCatching {
-            DeviceProvisionCoordinator(updatedSettings.baseUrl).fetchDeviceInfo()
-        }.getOrElse {
-            discoveredDevice.toRuntimeInfo(targetWifiSsid)
-        }
-
-        _deviceProvisionUiState.value = _deviceProvisionUiState.value.copy(
-            isFindingProvisionedDevice = false,
-            deviceInfo = refreshedInfo,
-            statusMessage = "Device connected to \"$targetWifiSsid\". New IP: ${refreshedInfo.ip}. Reconnecting automatically now.",
-            errorMessage = null
-        )
-        _settingsNotice.value = "Device discovered at ${refreshedInfo.ip}. Stream reconnecting automatically."
-    }
-
-    private suspend fun persistProvisionedDevice(
-        device: DiscoveredStreamDevice,
-        targetWifiSsid: String
-    ): VideoStreamSettings {
-        val currentSettings = database.videoStreamSettingsDao().getSettingsSync() ?: VideoStreamSettings()
-        val updatedSettings = currentSettings.copy(
-            ipAddress = device.host,
-            port = device.preferredPort,
-            deviceProfile = VideoStreamSettings.DEVICE_PROFILE_ESP32,
-            preferredWifiSsid = targetWifiSsid
-        ).normalized()
-        database.videoStreamSettingsDao().insert(updatedSettings)
-        return updatedSettings
-    }
-
-    private suspend fun createDeviceProvisionCoordinator(): DeviceProvisionCoordinator {
-        val settings = database.videoStreamSettingsDao().getSettingsSync() ?: VideoStreamSettings()
-        return DeviceProvisionCoordinator(settings.normalized().baseUrl)
-    }
-
-    private suspend fun migrateChangeDetectionDefaultsIfNeeded(currentSettings: VideoStreamSettings) {
-        if (migrationPreferences.getBoolean(KEY_CHANGE_DETECTION_DEFAULTS_MIGRATED, false)) {
-            return
-        }
-
-        val migratedSettings = currentSettings.copy(
-            changeDetectionEnabled = VideoStreamSettings.DEFAULT_CHANGE_DETECTION_ENABLED,
-            changeThresholdPercent = VideoStreamSettings.DEFAULT_CHANGE_THRESHOLD_PERCENT
-        )
-
-        if (migratedSettings != currentSettings) {
-            database.videoStreamSettingsDao().insert(migratedSettings)
-        }
-
-        migrationPreferences.edit()
-            .putBoolean(KEY_CHANGE_DETECTION_DEFAULTS_MIGRATED, true)
-            .apply()
-    }
-
-    private suspend fun migrateResolutionDefaultsIfNeeded(currentSettings: VideoStreamSettings) {
-        if (migrationPreferences.getBoolean(KEY_RESOLUTION_DEFAULTS_MIGRATED, false)) {
-            return
-        }
-
-        val normalized = currentSettings.normalized()
-        if (normalized.resolution == VideoStreamSettings.FALLBACK_RESOLUTION) {
-            database.videoStreamSettingsDao().insert(
-                normalized.copy(resolution = VideoStreamSettings.DEFAULT_RESOLUTION)
-            )
-        }
-
-        migrationPreferences.edit()
-            .putBoolean(KEY_RESOLUTION_DEFAULTS_MIGRATED, true)
-            .apply()
-    }
-
-    private fun sortDiscoveredDevices(
-        devices: List<DiscoveredStreamDevice>
-    ): List<DiscoveredStreamDevice> {
-        return devices.sortedWith(
-            compareBy<DiscoveredStreamDevice>({ it.kind.name }, { it.host })
-        )
-    }
+    // Device provisioning/scan/migration methods moved to DeviceDelegate
 
     private companion object {
         val TERMINAL_VIDEO_STAGES = setOf(
@@ -1598,23 +1433,3 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
     }
 }
 
-private fun DiscoveredStreamDevice.toRuntimeInfo(targetWifiSsid: String): DeviceRuntimeInfo {
-    return DeviceRuntimeInfo(
-        deviceId = deviceId,
-        mode = "sta",
-        staSsid = targetWifiSsid,
-        ip = host,
-        httpPort = preferredPort,
-        streamPort = streamPort,
-        mdnsUrl = mdnsUrl,
-        mdnsActive = mdnsUrl.isNotBlank(),
-        streamUrl = streamUrl
-    )
-}
-
-private const val MIGRATION_PREFERENCES_NAME = "watcher_migrations"
-private const val KEY_CHANGE_DETECTION_DEFAULTS_MIGRATED = "change_detection_defaults_v1"
-private const val KEY_RESOLUTION_DEFAULTS_MIGRATED = "resolution_defaults_v1"
-private const val PROVISIONING_RESTART_GRACE_PERIOD_MS = 2_500L
-private const val PROVISIONING_REDISCOVERY_TIMEOUT_MS = 90_000L
-private const val PROVISIONING_REDISCOVERY_RETRY_MS = 3_000L

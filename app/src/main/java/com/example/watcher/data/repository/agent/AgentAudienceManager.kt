@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import android.util.Log
 import com.example.watcher.data.local.AiAudienceDao
 import com.example.watcher.data.local.AiAudienceMessageDao
-import com.example.watcher.data.local.LlmProviderDao
 import com.example.watcher.data.model.AgentAudienceDebugSnapshot
 import com.example.watcher.data.model.AiAudienceEntity
 import com.example.watcher.data.model.AiAudienceLiveState
@@ -22,7 +21,10 @@ import com.example.watcher.data.remote.ChatMessage
 import com.example.watcher.data.remote.OpenAiCompatibleProvider
 import com.example.watcher.data.repository.BitmapEncoding
 import com.example.watcher.data.repository.CommentaryMemoryManager
+import com.example.watcher.data.repository.LlmWalletRepository
 import com.example.watcher.data.repository.SceneMemoryManager
+import com.example.watcher.data.repository.context.LiveSharedContextProfiles
+import com.example.watcher.data.repository.context.LiveSharedContextProvider
 import com.google.gson.Gson
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -44,10 +46,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 
 class AgentAudienceManager(
-    private val providerDao: LlmProviderDao,
+    private val llmWalletRepository: LlmWalletRepository,
     private val audienceDao: AiAudienceDao,
     private val messageDao: AiAudienceMessageDao,
     private val memoryManager: CommentaryMemoryManager,
@@ -58,9 +62,11 @@ class AgentAudienceManager(
     companion object {
         private const val TAG = "AgentAudience"
         private const val MAX_LIVE_MESSAGES = 80
-        private const val MAX_AI_CHAT_HISTORY = 10
         private const val INITIAL_BUDGET = 100
         private const val LIKE_COOLDOWN_MS = 60_000L
+        private const val MIN_TICK_GAP_MS = 5_000L
+        private const val PROVIDER_PARALLELISM = 2
+        private const val MAX_TRIGGER_AGE_MS = 20_000L
     }
 
     private val _liveState = MutableStateFlow(AiAudienceLiveState())
@@ -71,12 +77,14 @@ class AgentAudienceManager(
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val heartbeatJobs = mutableMapOf<Long, Job>()
-    private val resetChannels = mutableMapOf<Long, Channel<String>>()
+    private val resetChannels = mutableMapOf<Long, Channel<Unit>>()
     private val busyAudiences = mutableSetOf<Long>()
-    private val providerMutexes = mutableMapOf<String, Mutex>()
+    private val providerSemaphores = mutableMapOf<String, Semaphore>()
+    private val pendingTriggers = mutableMapOf<Long, AgentTrigger>()
     private val runtimeStates = mutableMapOf<Long, AgentRuntimeState>()
     private val debugSnapshots = mutableMapOf<Long, AgentAudienceDebugSnapshot>()
     private val stateMutex = Mutex()
+    private val triggerMutex = Mutex()
     private val gson = Gson()
 
     private val wallets = mutableMapOf<Long, Int>()
@@ -87,7 +95,8 @@ class AgentAudienceManager(
     private val lastPostContent = mutableMapOf<Long, Pair<Long, String>>()
     private val lastResponse = mutableMapOf<Long, Pair<Long, String>>()
     private val lastMentionCheckTime = mutableMapOf<Long, Long>()
-    private val promptBuilder = AgentAudiencePromptBuilder(memoryManager, sceneMemoryManager)
+    private val sharedContextProvider = LiveSharedContextProvider(messageDao, memoryManager, sceneMemoryManager)
+    private val promptBuilder = AgentAudiencePromptBuilder()
     private val responseParser = AgentAudienceResponseParser()
 
     private var lastLikerName: String? = null
@@ -108,11 +117,12 @@ class AgentAudienceManager(
     ) {
         latestFrameProvider = frameProvider
         speechTranscriptProvider = speechProvider
+        sharedContextProvider.updateProviders(frameProvider = frameProvider, speechProvider = speechProvider)
         observeJob?.cancel()
         observeJob = scope.launch {
             audienceDao.observeAll().collect { allAudiences ->
                 val enabled = allAudiences.filter { it.enabled && it.audienceType == audienceType }
-                val providers = providerDao.getAll()
+                val providers = llmWalletRepository.listProviders()
                 syncHeartbeats(enabled, providers)
             }
         }
@@ -131,9 +141,11 @@ class AgentAudienceManager(
         heartbeatJobs.clear()
         resetChannels.values.forEach { it.close() }
         resetChannels.clear()
-        providerMutexes.clear()
+        providerSemaphores.clear()
+        pendingTriggers.clear()
         latestFrameProvider = null
         speechTranscriptProvider = null
+        sharedContextProvider.updateProviders(frameProvider = null, speechProvider = null)
         lastMentionCheckTime.clear()
         lastLikeTime.clear()
         busyAudiences.clear()
@@ -168,7 +180,7 @@ class AgentAudienceManager(
             if (allMessages.isEmpty() && stateSnapshots.isEmpty()) return@launch
 
             val audiences = audienceDao.getEnabled().filter { it.audienceType == audienceType }
-            val providers = providerDao.getAll()
+            val providers = llmWalletRepository.listProviders()
             val memoryA = memoryManager.memoryA
             val memoryB = memoryManager.latestMemoryB
 
@@ -274,6 +286,7 @@ class AgentAudienceManager(
         for (id in runningIds - enabledIds) {
             heartbeatJobs.remove(id)?.cancel()
             resetChannels.remove(id)?.close()
+            pendingTriggers.remove(id)
             lastMentionCheckTime.remove(id)
             runtimeStates.remove(id)
             debugSnapshots.remove(id)
@@ -293,6 +306,7 @@ class AgentAudienceManager(
     ) {
         heartbeatJobs[audience.id]?.cancel()
         resetChannels.remove(audience.id)?.close()
+        pendingTriggers.remove(audience.id)
         val llm = OpenAiCompatibleProvider(
             id = provider.id,
             displayName = provider.name,
@@ -301,8 +315,8 @@ class AgentAudienceManager(
             modelName = provider.modelName
         )
         val otherNames = allAudiences.filter { it.id != audience.id }.map { it.name }
-        val mutex = providerMutexes.getOrPut(provider.id) { Mutex() }
-        val resetCh = Channel<String>(Channel.CONFLATED)
+        val semaphore = providerSemaphores.getOrPut(provider.id) { Semaphore(PROVIDER_PARALLELISM) }
+        val resetCh = Channel<Unit>(Channel.CONFLATED)
         resetChannels[audience.id] = resetCh
         wallets.putIfAbsent(audience.id, INITIAL_BUDGET)
 
@@ -314,16 +328,29 @@ class AgentAudienceManager(
 
             while (isActive) {
                 val waitMs = (baseIntervalMs + (-2000L..2000L).random()).coerceAtLeast(3000L)
-                val triggerType = select<String> {
-                    resetCh.onReceive { it }
-                    onTimeout(waitMs) { "heartbeat" }
+                val trigger = takePendingTrigger(audience.id) ?: select<AgentTrigger?> {
+                    resetCh.onReceive { takePendingTrigger(audience.id) }
+                    onTimeout(waitMs) { null }
+                } ?: AgentTrigger("heartbeat", triggerPriority("heartbeat"))
+
+                val now = System.currentTimeMillis()
+                if (trigger.type != "heartbeat" && now - trigger.createdAt > MAX_TRIGGER_AGE_MS) {
+                    continue
                 }
-                if (System.currentTimeMillis() - lastTickTime < 5000L) continue
+
+                val remainingCooldown = MIN_TICK_GAP_MS - (now - lastTickTime)
+                if (remainingCooldown > 0) {
+                    delay(remainingCooldown)
+                }
+
+                val effectiveTrigger = takePendingTrigger(audience.id, trigger) ?: trigger
 
                 try {
                     busyAudiences.add(audience.id)
                     lastTickTime = System.currentTimeMillis()
-                    val result = mutex.withLock { tick(audience, llm, otherNames, triggerType) }
+                    val result = semaphore.withPermit {
+                        tick(audience, llm, otherNames, effectiveTrigger.type)
+                    }
                     busyAudiences.remove(audience.id)
                     if (result != null) {
                         result.mentionedId?.let { triggerAudience(it, "mention:${audience.name}") }
@@ -343,34 +370,80 @@ class AgentAudienceManager(
 
     private suspend fun triggerBySpeech(text: String) {
         val alreadyTriggered = mutableSetOf<Long>()
-        val allAudiences = audienceDao.getEnabled()
+        val allAudiences = audienceDao.getEnabled().filter { it.audienceType == audienceType }
         for (audience in allAudiences) {
             if (text.contains(audience.name)) {
-                val ch = resetChannels[audience.id]
-                if (ch != null && audience.id !in busyAudiences) {
-                    ch.trySend("speech_named")
-                    alreadyTriggered.add(audience.id)
-                }
+                enqueueTrigger(audience.id, "speech_named")
+                alreadyTriggered.add(audience.id)
             }
         }
         triggerRandomAudiences("speech", alreadyTriggered)
     }
 
     private fun triggerRandomAudiences(triggerType: String, exclude: Set<Long>) {
-        val available = resetChannels.entries.filter { it.key !in busyAudiences && it.key !in exclude }
+        val available = resetChannels.keys.filter { it !in exclude }
         if (available.isEmpty()) return
         val count = if (available.size == 1) 1 else (1..2).random()
-        available.shuffled().take(count).forEach { (_, ch) -> ch.trySend(triggerType) }
+        available.shuffled().take(count).forEach { audienceId ->
+            enqueueTrigger(audienceId, triggerType)
+        }
     }
 
     private fun triggerAllAudiences(except: Long, triggerType: String) {
-        resetChannels.entries
-            .filter { it.key != except && it.key !in busyAudiences }
-            .forEach { (_, ch) -> ch.trySend(triggerType) }
+        resetChannels.keys
+            .filter { it != except }
+            .forEach { audienceId -> enqueueTrigger(audienceId, triggerType) }
     }
 
     private fun triggerAudience(audienceId: Long, triggerType: String) {
-        resetChannels[audienceId]?.trySend(triggerType)
+        enqueueTrigger(audienceId, triggerType)
+    }
+
+    private fun enqueueTrigger(audienceId: Long, triggerType: String) {
+        scope.launch {
+            val trigger = AgentTrigger(triggerType, triggerPriority(triggerType))
+            val signalChannel = triggerMutex.withLock {
+                val existing = pendingTriggers[audienceId]
+                if (shouldReplaceTrigger(existing, trigger)) {
+                    pendingTriggers[audienceId] = trigger
+                }
+                resetChannels[audienceId]
+            }
+            signalChannel?.trySend(Unit)
+        }
+    }
+
+    private suspend fun takePendingTrigger(
+        audienceId: Long,
+        fallback: AgentTrigger? = null
+    ): AgentTrigger? = triggerMutex.withLock {
+        val pending = pendingTriggers.remove(audienceId)
+        when {
+            pending == null -> fallback
+            fallback == null -> pending
+            pending.priority >= fallback.priority -> pending
+            else -> fallback
+        }
+    }
+
+    private fun shouldReplaceTrigger(existing: AgentTrigger?, candidate: AgentTrigger): Boolean {
+        if (existing == null) return true
+        return when {
+            existing.type == "heartbeat" && candidate.type != "heartbeat" -> true
+            candidate.priority > existing.priority -> true
+            candidate.priority == existing.priority && candidate.createdAt >= existing.createdAt -> true
+            else -> false
+        }
+    }
+
+    private fun triggerPriority(triggerType: String): Int = when {
+        triggerType == "speech_named" -> 500
+        triggerType == "highlight" -> 450
+        triggerType.startsWith("mention:") -> 400
+        triggerType == "mention" -> 380
+        triggerType == "speech" -> 320
+        triggerType == "heartbeat" -> 100
+        else -> 150
     }
 
     private suspend fun tick(
@@ -380,12 +453,17 @@ class AgentAudienceManager(
         triggerType: String
     ): TickResult? {
         val now = System.currentTimeMillis()
-        val recentMessages = messageDao.getRecent(MAX_AI_CHAT_HISTORY).reversed()
-        val mentions = loadPendingMentions(audience.id)
-        val recentSpeech = speechTranscriptProvider?.invoke()
-            ?.filter { it.first >= now - 2 * 60 * 1000 }
-            ?.take(8)
-            .orEmpty()
+        val context = sharedContextProvider.getSnapshot(
+            audience = audience,
+            activeAudienceNames = otherNames,
+            mentionSince = lastMentionCheckTime.getOrDefault(audience.id, 0L),
+            profile = LiveSharedContextProfiles.AgentAudience,
+            now = now
+        )
+        context.social.latestMentionTimestamp?.let { lastMentionCheckTime[audience.id] = it }
+        val recentMessages = context.social.recentMessages
+        val mentions = context.social.pendingMentions
+        val recentSpeech = context.speech.recentSpeech
 
         val state = stateMutex.withLock {
             val runtime = runtimeStates.getOrPut(audience.id) { createRuntimeState(audience) }
@@ -402,20 +480,24 @@ class AgentAudienceManager(
             runtime
         }
         val isFirstEntry = !state.hasEntered
+        val promptPlan = promptBuilder.buildPromptPlan(
+            audience = audience,
+            state = state,
+            triggerType = triggerType,
+            context = context
+        )
         val systemPrompt = promptBuilder.buildSystemPrompt(audience)
         val messages = promptBuilder.buildMessages(
             audience = audience,
-            otherNames = otherNames,
             state = state,
             triggerType = triggerType,
-            recentMessages = recentMessages,
-            mentions = mentions,
-            recentSpeech = recentSpeech,
             now = now,
             isFirstEntry = isFirstEntry,
-            budget = wallets[audience.id] ?: INITIAL_BUDGET
+            budget = wallets[audience.id] ?: INITIAL_BUDGET,
+            plan = promptPlan,
+            context = context
         )
-        val imageUri = if (audience.includeFrame) {
+        val imageUri = if (promptPlan.shouldAttachImage) {
             latestFrameProvider?.invoke()?.let { BitmapEncoding.toDataUri(it) }
         } else {
             null
@@ -447,6 +529,17 @@ class AgentAudienceManager(
         val mentionMatch = content?.let { Regex("@(\\S+)").find(it) }
         val target = mentionMatch?.groupValues?.getOrNull(1)?.let { name ->
             audienceDao.getEnabled().find { it.name.equals(name, ignoreCase = true) }
+        }
+        if (shouldSuppressPeerLoop(state, triggerType, target?.name, recentSpeech)) {
+            stateMutex.withLock {
+                state.currentGoal = "停止和同一观众继续循环互动，重新观察主播和画面"
+                state.focusTarget = "主播"
+                state.rememberWorkingMemory("这轮我刻意没有继续和 ${target?.name} 互相接梗")
+                runtimeStates[audience.id] = state
+                debugSnapshots[audience.id] = state.toDebugSnapshot()
+            }
+            persistRuntimeState(audience.id)
+            return null
         }
 
         val displayContent = content ?: when (action) {
@@ -484,13 +577,17 @@ class AgentAudienceManager(
         return TickResult(target?.id, action is AudienceAction.Gift && action.gift == GiftType.HIGHLIGHT)
     }
 
-    private suspend fun loadPendingMentions(audienceId: Long): List<AiAudienceMessageEntity> {
-        val sinceTime = lastMentionCheckTime.getOrDefault(audienceId, 0L)
-        val mentions = messageDao.getPendingMentions(audienceId, sinceTime)
-        if (mentions.isNotEmpty()) {
-            lastMentionCheckTime[audienceId] = mentions.maxOf { it.timestamp }
-        }
-        return mentions
+    private fun shouldSuppressPeerLoop(
+        state: AgentRuntimeState,
+        triggerType: String,
+        targetName: String?,
+        recentSpeech: List<Pair<Long, String>>
+    ): Boolean {
+        if (targetName.isNullOrBlank() || targetName == "主播") return false
+        if (!state.isPeerLoopHot(targetName)) return false
+        if (triggerType == "speech_named") return false
+        if (recentSpeech.isNotEmpty() && (triggerType == "speech" || triggerType == "highlight")) return false
+        return triggerType.startsWith("mention:") || triggerType == "mention" || triggerType == "heartbeat"
     }
 
     private fun buildDebugPrompt(systemPrompt: String, messages: List<ChatMessage>, hasImage: Boolean): String = buildString {
@@ -693,6 +790,15 @@ class AgentAudienceManager(
                     state.pushSocialEvent(msg.audienceName, msg.content.take(60), "被提到")
                 }
             }
+
+        val loopHotTarget = mentions.lastOrNull()
+            ?.audienceName
+            ?.takeIf { it.isNotBlank() && state.isPeerLoopHot(it) }
+        if (loopHotTarget != null) {
+            state.focusTarget = if (recentSpeech.isNotEmpty()) "主播" else "画面"
+            state.currentGoal = "避免继续和同一观众互相接梗，重新观察主播和画面"
+            state.rememberWorkingMemory("我和 $loopHotTarget 已经连续互相接话过多，这轮先收一下")
+        }
     }
 
     private fun applyPostActionSocialEffects(
@@ -708,14 +814,23 @@ class AgentAudienceManager(
             relation.affinity = (relation.affinity + 1).coerceIn(-5, 5)
             relation.note = "我最近主动和 Ta 互动过"
             state.noteInteractionTarget(targetName)
+            if (targetName != "主播") {
+                state.registerPeerInteraction(targetName)
+            } else {
+                state.clearPeerInteractionLoop()
+            }
+        } else if (action != AudienceAction.None) {
+            state.clearPeerInteractionLoop()
         }
         if (!content.isNullOrBlank()) {
             if (content.contains("@主播")) {
                 state.noteInteractionTarget("主播")
+                state.clearPeerInteractionLoop()
             }
             if (content.contains("主播")) {
                 val streamer = state.relations.getOrPut("主播") { AgentRelationState() }
                 streamer.familiarity = (streamer.familiarity + 1).coerceIn(0, 10)
+                state.clearPeerInteractionLoop()
             }
         }
         when (action) {
@@ -724,11 +839,16 @@ class AgentAudienceManager(
                 streamer.affinity = (streamer.affinity + if (action.gift.cost >= 30) 2 else 1).coerceIn(-5, 5)
                 state.currentGoal = "观察这次送礼有没有带来反馈"
                 state.pushSocialEvent(audienceName, "我刚送出了 ${action.gift.displayName}", "送礼")
+                state.clearPeerInteractionLoop()
             }
             is AudienceAction.Like -> {
                 state.currentGoal = "轻量表达支持后继续观察"
+                state.clearPeerInteractionLoop()
             }
             else -> Unit
+        }
+        if (content.isNullOrBlank() && action == AudienceAction.None) {
+            state.clearPeerInteractionLoop()
         }
     }
 
@@ -784,5 +904,11 @@ class AgentAudienceManager(
     private data class TickResult(
         val mentionedId: Long?,
         val isHighlight: Boolean
+    )
+
+    private data class AgentTrigger(
+        val type: String,
+        val priority: Int,
+        val createdAt: Long = System.currentTimeMillis()
     )
 }

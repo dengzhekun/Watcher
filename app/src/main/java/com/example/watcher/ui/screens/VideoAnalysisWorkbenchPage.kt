@@ -85,6 +85,8 @@ internal fun VideoAnalysisWorkbenchPage(
     onReconnectStream: () -> Unit,
     onCaptureSnapshot: (Bitmap) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenAgentConfig: () -> Unit,
+    onOpenWalletConfig: () -> Unit,
     currentPage: HubPage,
     pageOffset: Float
 ) {
@@ -137,7 +139,9 @@ internal fun VideoAnalysisWorkbenchPage(
                 subtitle = header.subtitle,
                 currentPage = currentPage,
                 pageOffset = pageOffset,
-                onOpenSettings = onOpenSettings
+                onOpenSettings = onOpenSettings,
+                onOpenAgentConfig = onOpenAgentConfig,
+                onOpenWalletConfig = onOpenWalletConfig
             )
         }
 

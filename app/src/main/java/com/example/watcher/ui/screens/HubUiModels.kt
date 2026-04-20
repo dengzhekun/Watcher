@@ -2,8 +2,8 @@ package com.example.watcher.ui.screens
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Analytics
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Videocam
@@ -30,7 +30,7 @@ internal enum class HubPage(
     Hub(1, "总览", Icons.Default.Home),
     Analysis(2, "视频分析", Icons.Default.Analytics),
     History(3, "历史记录", Icons.Default.History),
-    Templates(4, "管理中心", Icons.Default.Dashboard);
+    Templates(4, "统一配置", Icons.Default.Dashboard);
 
     companion object {
         fun fromPage(page: Int): HubPage = entries.firstOrNull { it.pageIndex == page } ?: Hub
@@ -59,7 +59,7 @@ internal fun workspaceHeaderFor(page: HubPage): WorkspaceHeaderContent {
 
         HubPage.Hub -> WorkspaceHeaderContent(
             eyebrow = "Watcher Hub",
-            title = "主页总览",
+            title = "首页总览",
             subtitle = "这里聚合摄像头连接、实时画面和当前任务状态。"
         )
 
@@ -76,9 +76,9 @@ internal fun workspaceHeaderFor(page: HubPage): WorkspaceHeaderContent {
         )
 
         HubPage.Templates -> WorkspaceHeaderContent(
-            eyebrow = "配置中心 / 模板管理",
-            title = "模板任务管理",
-            subtitle = "查看、编辑和管理所有监控与视频分析的预设模板。"
+            eyebrow = "配置中心 / 统一配置",
+            title = "统一配置界面",
+            subtitle = "统一管理监控模板、视频模板、智囊团模板、专家库、模型接口与 AI 观众配置。"
         )
     }
 }
@@ -163,9 +163,9 @@ internal fun buildHubSummary(
         else -> HubSummaryModel(
             eyebrow = "当前没有活动任务",
             title = "先确认摄像头地址，再选择左滑或右滑进入工作台。",
-            subtitle = "主页会持续显示连接状态、当前任务和最近进展。",
+            subtitle = "首页会持续显示连接状态、当前任务和最近进展。",
             progress = 0.1f,
-            tags = listOf("主页总览", "等待任务"),
+            tags = listOf("首页总览", "等待任务"),
             accent = Color(0xFF0058BE),
             icon = Icons.Default.Videocam
         )
@@ -192,7 +192,6 @@ internal fun videoProgress(status: VideoProcessingStatus): Float {
         VideoRunStatus.Uploading,
         VideoRunStatus.Preprocessing,
         VideoRunStatus.Analyzing -> 0.46f + (analysisProgress * 0.4f)
-
         VideoRunStatus.Summarizing -> 0.92f
         VideoRunStatus.Completed -> 1f
         VideoRunStatus.Failed,

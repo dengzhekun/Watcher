@@ -26,3 +26,6 @@ local.properties
 /.gradle-user
 /.gradle-user-home
 /.claude
+/.gradle-local
+/app/release
+*.litertlm

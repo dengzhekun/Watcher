@@ -39,3 +39,18 @@ data class VideoTemplateEntity(
     val isDefault: Boolean = true,
     val updatedAt: Long = System.currentTimeMillis()
 )
+
+@Entity(tableName = "council_templates")
+data class CouncilTemplateEntity(
+    @PrimaryKey val templateId: String,
+    val label: String,
+    val description: String,
+    val sceneType: String,
+    val objective: String,
+    val focus: String,
+    val speakerRole: String = "",
+    val targetRole: String = "",
+    val background: String = "",
+    val isDefault: Boolean = true,
+    val updatedAt: Long = System.currentTimeMillis()
+)

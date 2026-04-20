@@ -1,0 +1,220 @@
+package com.example.watcher.ui.components
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.util.Log
+import android.util.Size
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.core.content.ContextCompat
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+
+internal const val FRONT_CAMERA_SOURCE_LABEL = "手机前置摄像头（降级）"
+
+internal data class FrontCameraFallbackState(
+    val currentFrame: Bitmap? = null,
+    val connectionStatus: ConnectionStatus = ConnectionStatus.Disconnected,
+    val fps: Int = 0,
+    val sourceLabel: String = FRONT_CAMERA_SOURCE_LABEL,
+    val permissionDenied: Boolean = false
+)
+
+@Composable
+internal fun rememberFrontCameraFallbackState(
+    active: Boolean,
+    reconnectToken: Int,
+    onFrameUpdate: (Bitmap?) -> Unit = {}
+): FrontCameraFallbackState {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val mainExecutor = remember(context) { ContextCompat.getMainExecutor(context) }
+    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+
+    var currentFrame by remember { mutableStateOf<Bitmap?>(null) }
+    var connectionStatus by remember { mutableStateOf<ConnectionStatus>(ConnectionStatus.Disconnected) }
+    var fps by remember { mutableIntStateOf(0) }
+    var permissionDenied by remember { mutableStateOf(false) }
+    var hasPermission by remember(context) {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasPermission = granted
+        permissionDenied = !granted
+        if (!granted) {
+            currentFrame = null
+            fps = 0
+            connectionStatus = ConnectionStatus.Error(
+                "ESP32 视频流不可用，且相机权限未授予，无法切换到手机前置摄像头。"
+            )
+            onFrameUpdate(null)
+        }
+    }
+
+    DisposableEffect(cameraExecutor) {
+        onDispose {
+            cameraExecutor.shutdown()
+        }
+    }
+
+    LaunchedEffect(active, reconnectToken) {
+        if (!active) {
+            currentFrame = null
+            fps = 0
+            permissionDenied = false
+            connectionStatus = ConnectionStatus.Disconnected
+            onFrameUpdate(null)
+            return@LaunchedEffect
+        }
+
+        if (!hasPermission) {
+            connectionStatus = ConnectionStatus.Connecting
+            permissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    DisposableEffect(active, hasPermission, reconnectToken, lifecycleOwner) {
+        if (!active) {
+            onDispose { }
+        } else if (!hasPermission) {
+            onDispose { }
+        } else {
+            connectionStatus = ConnectionStatus.Connecting
+            var cameraProvider: ProcessCameraProvider? = null
+            var fpsFrameCount = 0
+            var fpsWindowStart = System.currentTimeMillis()
+
+            val providerFuture = ProcessCameraProvider.getInstance(context)
+            val bindRunnable = Runnable {
+                runCatching {
+                    val provider = providerFuture.get()
+                    val analysis = buildImageAnalysis(cameraExecutor) { image ->
+                        val frame = image.toBitmap()
+                        image.close()
+
+                        mainExecutor.execute {
+                            currentFrame = frame
+                            connectionStatus = ConnectionStatus.Connected
+                            onFrameUpdate(frame)
+
+                            fpsFrameCount += 1
+                            val now = System.currentTimeMillis()
+                            if (now - fpsWindowStart >= 1_000) {
+                                fps = fpsFrameCount
+                                fpsFrameCount = 0
+                                fpsWindowStart = now
+                            }
+                        }
+                    }
+
+                    provider.unbindAll()
+                    provider.bindToLifecycle(
+                        lifecycleOwner,
+                        CameraSelector.DEFAULT_FRONT_CAMERA,
+                        analysis
+                    )
+                    cameraProvider = provider
+                }.onFailure { error ->
+                    Log.e("FrontCameraFallback", "Failed to start front camera fallback", error)
+                    connectionStatus = ConnectionStatus.Error(
+                        error.message ?: "手机前置摄像头启动失败。"
+                    )
+                    currentFrame = null
+                    fps = 0
+                    onFrameUpdate(null)
+                }
+            }
+
+            providerFuture.addListener(bindRunnable, mainExecutor)
+
+            onDispose {
+                cameraProvider?.unbindAll()
+                currentFrame = null
+                fps = 0
+                connectionStatus = ConnectionStatus.Disconnected
+                onFrameUpdate(null)
+            }
+        }
+    }
+
+    return FrontCameraFallbackState(
+        currentFrame = currentFrame,
+        connectionStatus = connectionStatus,
+        fps = fps,
+        permissionDenied = permissionDenied
+    )
+}
+
+private fun buildImageAnalysis(
+    executor: ExecutorService,
+    onFrame: (ImageProxy) -> Unit
+): ImageAnalysis {
+    return ImageAnalysis.Builder()
+        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+        .setTargetResolution(Size(640, 480))
+        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+        .build()
+        .apply {
+            setAnalyzer(executor, onFrame)
+        }
+}
+
+private fun ImageProxy.toBitmap(): Bitmap {
+    val plane = planes.first()
+    val width = width
+    val height = height
+    val buffer = plane.buffer
+    val rowStride = plane.rowStride
+    val pixelStride = plane.pixelStride
+    val rowBytes = ByteArray(rowStride)
+    val pixels = IntArray(width * height)
+    var pixelIndex = 0
+
+    for (row in 0 until height) {
+        buffer.position(row * rowStride)
+        buffer.get(rowBytes, 0, rowStride)
+        var columnOffset = 0
+        while (columnOffset < width * pixelStride && pixelIndex < pixels.size) {
+            val red = rowBytes[columnOffset].toInt() and 0xFF
+            val green = rowBytes[columnOffset + 1].toInt() and 0xFF
+            val blue = rowBytes[columnOffset + 2].toInt() and 0xFF
+            val alpha = rowBytes[columnOffset + 3].toInt() and 0xFF
+            pixels[pixelIndex] =
+                android.graphics.Color.argb(alpha, red, green, blue)
+            pixelIndex += 1
+            columnOffset += pixelStride
+        }
+    }
+
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+    val rotation = imageInfo.rotationDegrees
+    if (rotation == 0) {
+        return bitmap
+    }
+
+    val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+}

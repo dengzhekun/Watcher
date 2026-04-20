@@ -1,8 +1,17 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+}
+
+val localProperties = Properties().apply {
+    val localFile = rootProject.file("local.properties")
+    if (localFile.exists()) {
+        localFile.inputStream().use(::load)
+    }
 }
 
 android {
@@ -18,33 +27,46 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Read API key from local.properties.
-        val localFile = rootProject.file("local.properties")
-        val apiKey = if (localFile.exists()) {
-            localFile.readLines()
-                .mapNotNull { line ->
-                    val trimmed = line.trim()
-                    if (trimmed.startsWith("API_KEY=")) {
-                        trimmed.substringAfter("API_KEY=").trim()
-                    } else {
-                        null
-                    }
-                }
-                .firstOrNull() ?: ""
-        } else {
-            ""
-        }
+        val apiKey = localProperties.getProperty("API_KEY", "")
         buildConfigField("String", "API_KEY", "\"$apiKey\"")
+    }
+
+    signingConfigs {
+        val releaseStoreFile = localProperties.getProperty("RELEASE_STORE_FILE")?.trim().orEmpty()
+        val releaseStorePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD")?.trim().orEmpty()
+        val releaseKeyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS")?.trim().orEmpty()
+        val releaseKeyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD")?.trim().orEmpty()
+
+        if (
+            releaseStoreFile.isNotBlank() &&
+            releaseStorePassword.isNotBlank() &&
+            releaseKeyAlias.isNotBlank() &&
+            releaseKeyPassword.isNotBlank()
+        ) {
+            create("release") {
+                val keystoreFile = rootProject.file(releaseStoreFile).let { candidate ->
+                    if (candidate.isAbsolute) candidate else rootProject.file(releaseStoreFile)
+                }
+                storeFile = keystoreFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
         }
+    }
+    lint {
+        checkReleaseBuilds = false
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -56,6 +78,9 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    androidResources {
+        noCompress += "litertlm"
     }
 }
 
@@ -69,6 +94,8 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation("androidx.compose.material:material-icons-extended")
+    implementation(libs.androidx.security.crypto)
+    implementation(libs.play.services.location)
 
     // ViewModel Compose
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -89,6 +116,18 @@ dependencies {
 
     // MJPEG frame sequence to MP4 encoding
     implementation(libs.jcodec.android)
+
+    // CameraX fallback for local front camera preview
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
+    // Embedded HTTP server for gateway API
+    implementation(libs.nanohttpd)
+
+    // LiteRT-LM on-device inference
+    implementation(libs.litertlm.android)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

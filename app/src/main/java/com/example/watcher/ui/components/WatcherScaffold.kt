@@ -23,7 +23,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -145,7 +147,9 @@ internal fun WatcherTopBar(
     subtitle: String,
     currentPage: HubPage,
     pageOffset: Float,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenAgentConfig: (() -> Unit)? = null,
+    onOpenWalletConfig: (() -> Unit)? = null
 ) {
     val extendedColors = LocalWatcherExtendedColors.current
     val accent = blendedPageAccent(selectionPosition(currentPage, pageOffset))
@@ -181,17 +185,49 @@ internal fun WatcherTopBar(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Surface(
-            shape = CircleShape,
-            color = extendedColors.glassOverlay,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
-        ) {
-            IconButton(onClick = onOpenSettings) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Open settings",
-                    tint = MaterialTheme.colorScheme.onSurface
-                )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (onOpenWalletConfig != null) {
+                Surface(
+                    shape = CircleShape,
+                    color = extendedColors.glassOverlay,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+                ) {
+                    IconButton(onClick = onOpenWalletConfig) {
+                        Icon(
+                            imageVector = Icons.Default.VpnKey,
+                            contentDescription = "Open API wallet",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+            if (onOpenAgentConfig != null) {
+                Surface(
+                    shape = CircleShape,
+                    color = extendedColors.glassOverlay,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+                ) {
+                    IconButton(onClick = onOpenAgentConfig) {
+                        Icon(
+                            imageVector = Icons.Default.Psychology,
+                            contentDescription = "Open agent settings",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+            Surface(
+                shape = CircleShape,
+                color = extendedColors.glassOverlay,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+            ) {
+                IconButton(onClick = onOpenSettings) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Open settings",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                }
             }
         }
     }

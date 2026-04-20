@@ -1,7 +1,9 @@
 package com.example.watcher.data.repository
 
 import android.util.Log
+import com.example.watcher.data.model.CommentaryPromptProfile
 import com.example.watcher.data.model.EntityStatus
+import com.example.watcher.data.model.SceneProfile
 import com.example.watcher.data.model.SceneEntity
 import com.example.watcher.data.remote.ContentItem
 import com.example.watcher.data.remote.DoubaoApiService
@@ -22,14 +24,16 @@ import kotlinx.coroutines.sync.withLock
  *   [SCENE] / [NEW] / [ATTR] / [NOTE] / [FIX] / [STATUS] / [ACTION] / [ASK]
  */
 class SceneMemoryManager(
-    private val apiService: DoubaoApiService
+    private val apiService: DoubaoApiService,
+    private val llmWalletRepository: LlmWalletRepository,
+    private val promptProfile: CommentaryPromptProfile = CommentaryPromptProfile.liveRoom()
 ) {
     companion object {
         private const val TAG = "SceneMemory"
+        /** Each set of expert requests is injected into at most this many consumer prompts. */
+        private const val MAX_EXPERT_REQUEST_SERVES = 4
     }
 
-    private val apiKey = ArkConfig.apiKey
-    private val model = ArkConfig.intentModel
     private val mutex = Mutex()
 
     // Layer 1: Static scene
@@ -44,8 +48,12 @@ class SceneMemoryManager(
     var actionSummary: String = ""
         private set
 
-    // ASK requests
+    // ASK requests from Consumer A (builder)
     private val _pendingRequests = mutableListOf<String>()
+    // Observation requests from council experts (visual-only, auto-expire)
+    private val _expertRequests = mutableListOf<String>()
+    private var expertRequestsSetAt = 0L
+    private var expertRequestsServedCount = 0
     private val _actionBuffer = mutableListOf<String>()
 
     // Phase tracking
@@ -59,6 +67,11 @@ class SceneMemoryManager(
         private set
     private var processedCount = 0
     private var currentSegmentIndex = 0
+    var currentSceneProfileId: String? = null
+        private set
+    private var recalledSceneLabel: String = ""
+    private var recalledSceneProbeSummary: String = ""
+    private var recalledMatchedAnchors: List<String> = emptyList()
 
     fun shouldProcess(segmentIndex: Int): Boolean {
         return when (phase) {
@@ -66,6 +79,23 @@ class SceneMemoryManager(
             Phase.BUILDING -> segmentIndex % 2 == 0
             Phase.STEADY -> segmentIndex % 5 == 0
         }
+    }
+
+    fun preloadSceneProfile(
+        profile: SceneProfile,
+        probeSummary: String,
+        matchedAnchors: List<String> = emptyList()
+    ) {
+        sceneMemory = profile.summary
+        actionSummary = "候选场景已召回：${profile.label}"
+        currentSceneProfileId = profile.sceneId
+        recalledSceneLabel = profile.label
+        recalledSceneProbeSummary = probeSummary
+        recalledMatchedAnchors = matchedAnchors
+        phase = Phase.BUILDING
+        processedCount = processedCount.coerceAtLeast(6)
+        _pendingRequests.clear()
+        _pendingRequests += buildSceneVerificationAsks(profile, matchedAnchors)
     }
 
     suspend fun processCommentary(commentaryText: String, segmentIndex: Int = 0) = mutex.withLock {
@@ -84,8 +114,62 @@ class SceneMemoryManager(
 
     fun getPendingRequests(): List<String> = _pendingRequests.toList()
 
+    /** Read-only snapshot for UI display — does not affect expiry counter. */
+    fun getExpertRequests(): List<String> = _expertRequests.toList()
+
+    /**
+     * Returns current expert requests for prompt injection. Each call increments
+     * the served counter. After [MAX_EXPERT_REQUEST_SERVES] consumer segments,
+     * requests auto-expire (consumers have had enough chances to respond).
+     */
+    @Synchronized
+    fun consumeExpertRequests(): List<String> {
+        if (_expertRequests.isEmpty()) return emptyList()
+        expertRequestsServedCount++
+        if (expertRequestsServedCount > MAX_EXPERT_REQUEST_SERVES) {
+            _expertRequests.clear()
+            return emptyList()
+        }
+        return _expertRequests.toList()
+    }
+
+    /**
+     * Replace all expert observation requests. Called by CouncilManager after
+     * each Gathering phase — empty list clears previous requests.
+     */
+    @Synchronized
+    fun setExpertRequests(requests: List<String>) {
+        _expertRequests.clear()
+        _expertRequests.addAll(requests.take(8))
+        expertRequestsSetAt = System.currentTimeMillis()
+        expertRequestsServedCount = 0
+    }
+
+    /**
+     * Append additional observation requests (e.g. from discussion phase).
+     * Deduplicates and caps at 8 total.
+     */
+    @Synchronized
+    fun appendExpertRequests(requests: List<String>) {
+        val existing = _expertRequests.toSet()
+        val newOnes = requests.filter { it !in existing }
+        _expertRequests.addAll(newOnes)
+        while (_expertRequests.size > 8) _expertRequests.removeAt(0)
+        // Reset serve counter so the appended requests also get served
+        expertRequestsServedCount = 0
+    }
+
+
     /** Build full scene context for B/C commentary prompts */
     fun buildSceneContext(): String = buildString {
+        if (currentSceneProfileId != null) {
+            appendLine("【候选场景档案】（优先验证是否仍为该场景）")
+            appendLine("标签：$recalledSceneLabel")
+            if (sceneMemory.isNotBlank()) appendLine("摘要：$sceneMemory")
+            if (recalledMatchedAnchors.isNotEmpty()) appendLine("命中锚点：${recalledMatchedAnchors.joinToString("、")}")
+            if (recalledSceneProbeSummary.isNotBlank()) appendLine("当前帧粗识别：$recalledSceneProbeSummary")
+            appendLine()
+        }
         if (sceneMemory.isNotBlank()) {
             appendLine("【固定场景】（不需要再描述）")
             appendLine(sceneMemory)
@@ -108,6 +192,35 @@ class SceneMemoryManager(
         }
     }
 
+    /**
+     * Build a low-contamination context block for B/C observers.
+     *
+     * Only stable scene/entity context is included. Dynamic summaries and
+     * recent commentary are intentionally excluded to avoid carrying over
+     * old actions as if they were still visible in the current segment.
+     */
+    fun buildObservationContext(): String = buildString {
+        if (currentSceneProfileId != null) {
+            appendLine("【候选场景档案】（仅用于确认是否仍是该场景，不代表当前动作仍在继续）")
+            appendLine("标签：$recalledSceneLabel")
+            if (sceneMemory.isNotBlank()) appendLine("摘要：$sceneMemory")
+            if (recalledMatchedAnchors.isNotEmpty()) appendLine("命中锚点：${recalledMatchedAnchors.joinToString("、")}")
+            if (recalledSceneProbeSummary.isNotBlank()) appendLine("当前帧粗识别：$recalledSceneProbeSummary")
+            appendLine()
+        }
+        if (sceneMemory.isNotBlank()) {
+            appendLine("【固定场景】（稳定背景，仅用于减少重复描述）")
+            appendLine(sceneMemory)
+            appendLine()
+        }
+        val activeEntities = _entities.values.filter { it.status == EntityStatus.ACTIVE }
+        if (activeEntities.isNotEmpty()) {
+            appendLine("【已识别实体】（稳定身份信息，不代表其当前动作仍在继续）")
+            activeEntities.forEach { appendLine("- ${it.toPromptString()}") }
+            appendLine()
+        }
+    }
+
     /** Build entity memory as readable text (for UI display and AI audience context) */
     fun buildEntitySummary(): String {
         if (_entities.isEmpty()) return ""
@@ -119,15 +232,20 @@ class SceneMemoryManager(
         _entities.clear()
         actionSummary = ""
         _pendingRequests.clear()
+        _expertRequests.clear()
         _actionBuffer.clear()
         processedCount = 0
         phase = Phase.BOOTSTRAP
+        currentSceneProfileId = null
+        recalledSceneLabel = ""
+        recalledSceneProbeSummary = ""
+        recalledMatchedAnchors = emptyList()
     }
 
     // --- Builder prompt ---
 
     private fun buildBuilderPrompt(latestText: String): String = buildString {
-        appendLine("你是直播场景分析建设者。根据解说员的画面描述，维护结构化的场景记忆。")
+        appendLine(promptProfile.builderRole)
         appendLine()
 
         // Current state
@@ -146,15 +264,9 @@ class SceneMemoryManager(
         appendLine()
 
         when (phase) {
-            Phase.BOOTSTRAP -> {
-                appendLine("【冷启动】重点：建立场景 + 识别所有实体 + 对模糊信息发 ASK")
-            }
-            Phase.BUILDING -> {
-                appendLine("【补全中】重点：补充实体属性 + 识别新实体 + 校对已有信息 + 压缩动态")
-            }
-            Phase.STEADY -> {
-                appendLine("【稳态】重点：检查场景变化 + 追踪实体增减 + 压缩动态")
-            }
+            Phase.BOOTSTRAP -> appendLine(promptProfile.builderBootstrapHint)
+            Phase.BUILDING -> appendLine(promptProfile.builderBuildingHint)
+            Phase.STEADY -> appendLine(promptProfile.builderSteadyHint)
         }
 
         appendLine()
@@ -237,8 +349,13 @@ class SceneMemoryManager(
             }
         }
 
+        val mergedRequests = (_pendingRequests + newRequests)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(8)
         _pendingRequests.clear()
-        _pendingRequests.addAll(newRequests)
+        _pendingRequests.addAll(mergedRequests)
         while (_actionBuffer.size > 10) _actionBuffer.removeAt(0)
     }
 
@@ -320,14 +437,30 @@ class SceneMemoryManager(
         }
     }
 
+    private fun buildSceneVerificationAsks(
+        profile: SceneProfile,
+        matchedAnchors: List<String>
+    ): List<String> {
+        val asks = mutableListOf<String>()
+        asks += "优先确认当前画面是否仍是「${profile.label}」这个固定场景。"
+        if (matchedAnchors.isNotEmpty()) {
+            asks += "请验证这些锚点是否仍然存在：${matchedAnchors.joinToString("、")}。"
+        } else if (profile.anchorObjects.isNotBlank()) {
+            asks += "请验证这些锚点是否仍然存在：${profile.anchorObjects}。"
+        }
+        asks += "如果与已知场景不一致，请只描述新增、缺失或位置变化最明显的物品。"
+        return asks.take(3)
+    }
+
     // --- LLM ---
 
     private suspend fun callLlm(prompt: String): String? {
         return try {
+            val llmConfig = llmWalletRepository.resolveArkResponsesConfig(ArkConfig.intentModel)
             val response = apiService.analyzeIntent(
-                authorization = "Bearer $apiKey",
+                authorization = llmConfig.bearerToken(),
                 request = DoubaoRequest(
-                    model = model,
+                    model = llmConfig.modelName,
                     input = listOf(
                         Message(role = "user", content = listOf(ContentItem(type = "input_text", text = prompt)))
                     )

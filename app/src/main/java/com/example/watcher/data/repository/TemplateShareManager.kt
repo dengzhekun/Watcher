@@ -1,6 +1,8 @@
 package com.example.watcher.data.repository
 
 import android.util.Base64
+import com.example.watcher.data.model.CouncilExpertEntity
+import com.example.watcher.data.model.CouncilTemplateEntity
 import com.example.watcher.data.model.MonitorTemplateEntity
 import com.example.watcher.data.model.VideoTemplateEntity
 import com.google.gson.Gson
@@ -14,10 +16,10 @@ import java.util.zip.Inflater
  * Template share/import via Base64 encoded text.
  *
  * Share format:
- *   我向你分享了一个模板skill~,[模板名称]打开Watcher查看吧！#WTR#{base64_data}
+ *   Share a Watcher template: [template name] #WTR#{base64_data}
  *
  * The base64 payload is DEFLATE-compressed JSON:
- *   { "type": "monitor"|"video", "version": 1, "data": { ...template fields... } }
+ *   { "type": "monitor"|"video"|"council"|"council_expert", "version": 1, "data": { ...template fields... } }
  */
 object TemplateShareManager {
 
@@ -25,42 +27,36 @@ object TemplateShareManager {
     private const val VERSION = 1
     private val gson = Gson()
 
-    // --- Export ---
-
     fun exportMonitorTemplate(template: MonitorTemplateEntity): String {
-        val json = JsonObject().apply {
-            addProperty("type", "monitor")
-            addProperty("version", VERSION)
-            add("data", gson.toJsonTree(template))
-        }
-        val base64 = compressAndEncode(json.toString())
-        return "我向你分享了一个模板skill~,[${template.label}]打开Watcher查看吧！${SHARE_MARKER}${base64}"
+        return exportTemplate(type = "monitor", label = template.label, template = template)
     }
 
     fun exportVideoTemplate(template: VideoTemplateEntity): String {
-        val json = JsonObject().apply {
-            addProperty("type", "video")
-            addProperty("version", VERSION)
-            add("data", gson.toJsonTree(template))
-        }
-        val base64 = compressAndEncode(json.toString())
-        return "我向你分享了一个模板skill~,[${template.label}]打开Watcher查看吧！${SHARE_MARKER}${base64}"
+        return exportTemplate(type = "video", label = template.label, template = template)
     }
 
-    // --- Import ---
+    fun exportCouncilTemplate(template: CouncilTemplateEntity): String {
+        return exportTemplate(type = "council", label = template.label, template = template)
+    }
+
+    fun exportCouncilExpertTemplate(expert: CouncilExpertEntity): String {
+        return exportTemplate(type = "council_expert", label = expert.name, template = expert)
+    }
 
     data class ImportResult(
-        val type: String,  // "monitor" or "video"
+        val type: String,
         val label: String,
         val monitorTemplate: MonitorTemplateEntity? = null,
-        val videoTemplate: VideoTemplateEntity? = null
+        val videoTemplate: VideoTemplateEntity? = null,
+        val councilTemplate: CouncilTemplateEntity? = null,
+        val councilExpert: CouncilExpertEntity? = null
     )
 
     fun canImport(text: String): Boolean = text.contains(SHARE_MARKER)
 
     fun importTemplate(text: String): Result<ImportResult> = runCatching {
         val markerIdx = text.indexOf(SHARE_MARKER)
-        require(markerIdx >= 0) { "无效的分享文本" }
+        require(markerIdx >= 0) { "Invalid shared template text." }
 
         val base64 = text.substring(markerIdx + SHARE_MARKER.length).trim()
         val jsonStr = decodeAndDecompress(base64)
@@ -72,30 +68,53 @@ object TemplateShareManager {
         when (type) {
             "monitor" -> {
                 val template = gson.fromJson(data, MonitorTemplateEntity::class.java)
-                // Assign new ID to avoid conflict
-                val imported = template.copy(
-                    templateId = "imported_${UUID.randomUUID().toString().take(8)}",
+                ImportResult(
+                    type = "monitor",
                     label = template.label,
-                    isDefault = false,
-                    updatedAt = System.currentTimeMillis()
+                    monitorTemplate = template.importedCopy()
                 )
-                ImportResult(type = "monitor", label = imported.label, monitorTemplate = imported)
             }
+
             "video" -> {
                 val template = gson.fromJson(data, VideoTemplateEntity::class.java)
-                val imported = template.copy(
-                    templateId = "imported_${UUID.randomUUID().toString().take(8)}",
+                ImportResult(
+                    type = "video",
                     label = template.label,
-                    isDefault = false,
-                    updatedAt = System.currentTimeMillis()
+                    videoTemplate = template.importedCopy()
                 )
-                ImportResult(type = "video", label = imported.label, videoTemplate = imported)
             }
-            else -> error("未知模板类型: $type")
+
+            "council" -> {
+                val template = gson.fromJson(data, CouncilTemplateEntity::class.java)
+                ImportResult(
+                    type = "council",
+                    label = template.label,
+                    councilTemplate = template.importedCopy()
+                )
+            }
+
+            "council_expert" -> {
+                val expert = gson.fromJson(data, CouncilExpertEntity::class.java)
+                ImportResult(
+                    type = "council_expert",
+                    label = expert.name,
+                    councilExpert = expert
+                )
+            }
+
+            else -> error("Unknown template type: $type")
         }
     }
 
-    // --- Compression ---
+    private fun exportTemplate(type: String, label: String, template: Any): String {
+        val json = JsonObject().apply {
+            addProperty("type", type)
+            addProperty("version", VERSION)
+            add("data", gson.toJsonTree(template))
+        }
+        val base64 = compressAndEncode(json.toString())
+        return "Share a Watcher template: [$label] $SHARE_MARKER$base64"
+    }
 
     private fun compressAndEncode(input: String): String {
         val bytes = input.toByteArray(Charsets.UTF_8)
@@ -128,5 +147,33 @@ object TemplateShareManager {
         inflater.end()
 
         return output.toString(Charsets.UTF_8.name())
+    }
+
+    private fun MonitorTemplateEntity.importedCopy(): MonitorTemplateEntity {
+        return copy(
+            templateId = importedTemplateId(),
+            isDefault = false,
+            updatedAt = System.currentTimeMillis()
+        )
+    }
+
+    private fun VideoTemplateEntity.importedCopy(): VideoTemplateEntity {
+        return copy(
+            templateId = importedTemplateId(),
+            isDefault = false,
+            updatedAt = System.currentTimeMillis()
+        )
+    }
+
+    private fun CouncilTemplateEntity.importedCopy(): CouncilTemplateEntity {
+        return copy(
+            templateId = importedTemplateId(),
+            isDefault = false,
+            updatedAt = System.currentTimeMillis()
+        )
+    }
+
+    private fun importedTemplateId(): String {
+        return "imported_${UUID.randomUUID().toString().take(8)}"
     }
 }

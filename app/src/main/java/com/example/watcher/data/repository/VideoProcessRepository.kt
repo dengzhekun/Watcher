@@ -50,6 +50,7 @@ class VideoProcessRepository(
     private val runDao: VideoProcessRunDao,
     private val segmentRunDao: VideoSegmentRunDao,
     private val timelineEventDao: TimelineEventDao,
+    private val llmWalletRepository: LlmWalletRepository,
     private val recorder: MjpegVideoRecorder = MjpegVideoRecorder(),
     private val segmentMerger: VideoSegmentMerger = VideoSegmentMerger(),
     private val streamingClient: ArkStreamingClient = ArkStreamingClient()

@@ -92,13 +92,14 @@ internal fun WatcherCard(
 
 @Composable
 internal fun ConnectionConfigCard(
+    modifier: Modifier = Modifier,
     label: String,
     value: String,
     detail: String,
     onClick: () -> Unit
 ) {
     val extendedColors = LocalWatcherExtendedColors.current
-    WatcherCard(onClick = onClick) {
+    WatcherCard(modifier = modifier, onClick = onClick) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -220,7 +221,12 @@ private fun PreviewHeader(
             )
             if (streamState.connectionStatus is ConnectionStatus.Connected) {
                 StatusPill(
-                    text = "${streamState.fps} FPS",
+                    text = buildString {
+                        append("${streamState.fps} FPS")
+                        if (streamState.source == StreamSource.FrontCameraFallback) {
+                            append(" · 前摄")
+                        }
+                    },
                     accent = MaterialTheme.colorScheme.primary
                 )
             }
@@ -251,8 +257,12 @@ private fun BoxScope.PreviewFooter(
         )
         Text(
             text = when (val status = streamState.connectionStatus) {
-                ConnectionStatus.Connected -> "Auto-connect is on. Saving a new address reconnects right away."
-                ConnectionStatus.Connecting -> "Connecting to ${streamState.activeStreamUrl ?: subtitle}"
+                ConnectionStatus.Connected -> if (streamState.source == StreamSource.FrontCameraFallback) {
+                    "ESP32 流不可用，当前已自动切换到手机前置摄像头。"
+                } else {
+                    "Auto-connect is on. Saving a new address reconnects right away."
+                }
+                ConnectionStatus.Connecting -> "Connecting to ${streamState.activeStreamUrl ?: streamState.sourceLabel.ifBlank { subtitle }}"
                 is ConnectionStatus.Error -> status.message
                 ConnectionStatus.Disconnected -> "Stream is paused. Tap reconnect to resume."
             },

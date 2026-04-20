@@ -7,6 +7,7 @@ internal const val MAX_EPISODIC_MEMORY = 8
 internal const val MAX_RELATIONS_IN_PROMPT = 6
 internal const val MAX_SOCIAL_EVENTS = 8
 internal const val MAX_RECENT_TARGETS = 5
+internal const val PEER_LOOP_STREAK_LIMIT = 2
 
 internal data class AgentSocialProfile(
     val archetype: String,
@@ -59,6 +60,8 @@ internal data class AgentRuntimeState(
     var lastActionSummary: String = "尚未行动",
     var hasEntered: Boolean = false,
     var silenceStreak: Int = 0,
+    var peerInteractionTarget: String = "",
+    var peerInteractionStreak: Int = 0,
     val socialProfile: AgentSocialProfile = AgentSocialProfile(
         archetype = "普通观众",
         speakingStyle = "口语化、简短",
@@ -105,11 +108,33 @@ internal data class AgentRuntimeState(
 
     fun noteInteractionTarget(target: String) {
         if (target.isBlank()) return
-        recentInteractionTargets.remove(target)
-        recentInteractionTargets.addLast(target.take(20))
+        val normalized = target.take(20)
+        recentInteractionTargets.remove(normalized)
+        recentInteractionTargets.addLast(normalized)
         while (recentInteractionTargets.size > MAX_RECENT_TARGETS) {
             recentInteractionTargets.removeFirst()
         }
+    }
+
+    fun registerPeerInteraction(target: String) {
+        val normalized = target.take(20)
+        if (normalized.isBlank()) return
+        if (peerInteractionTarget == normalized) {
+            peerInteractionStreak = (peerInteractionStreak + 1).coerceAtMost(8)
+        } else {
+            peerInteractionTarget = normalized
+            peerInteractionStreak = 1
+        }
+    }
+
+    fun clearPeerInteractionLoop() {
+        peerInteractionTarget = ""
+        peerInteractionStreak = 0
+    }
+
+    fun isPeerLoopHot(target: String? = peerInteractionTarget): Boolean {
+        val normalized = target?.takeIf { it.isNotBlank() } ?: return false
+        return peerInteractionTarget == normalized && peerInteractionStreak >= PEER_LOOP_STREAK_LIMIT
     }
 
     fun ensureStreamerRelation() {
@@ -186,6 +211,8 @@ internal data class PersistedAgentRuntimeState(
     val lastActionSummary: String = "尚未行动",
     val hasEntered: Boolean = false,
     val silenceStreak: Int = 0,
+    val peerInteractionTarget: String = "",
+    val peerInteractionStreak: Int = 0,
     val socialProfile: AgentSocialProfile = AgentSocialProfile(
         archetype = "普通观众",
         speakingStyle = "口语化、简短",
@@ -207,6 +234,8 @@ internal data class PersistedAgentState(
     val lastActionSummary: String = "尚未行动",
     val hasEntered: Boolean = false,
     val silenceStreak: Int = 0,
+    val peerInteractionTarget: String = "",
+    val peerInteractionStreak: Int = 0,
     val socialProfile: AgentSocialProfile = AgentSocialProfile(
         archetype = "普通观众",
         speakingStyle = "口语化、简短",
@@ -230,6 +259,8 @@ internal fun AgentRuntimeState.toPersistedState(): PersistedAgentState = Persist
     lastActionSummary = lastActionSummary,
     hasEntered = hasEntered,
     silenceStreak = silenceStreak,
+    peerInteractionTarget = peerInteractionTarget,
+    peerInteractionStreak = peerInteractionStreak,
     socialProfile = socialProfile,
     workingMemory = workingMemory.toList(),
     episodicMemory = episodicMemory.toList(),
@@ -246,6 +277,8 @@ internal fun PersistedAgentRuntimeState.toRuntimeState(): AgentRuntimeState = Ag
     lastActionSummary = lastActionSummary,
     hasEntered = hasEntered,
     silenceStreak = silenceStreak,
+    peerInteractionTarget = peerInteractionTarget,
+    peerInteractionStreak = peerInteractionStreak,
     socialProfile = socialProfile,
     workingMemory = ArrayDeque(workingMemory),
     episodicMemory = ArrayDeque(episodicMemory),
@@ -264,6 +297,8 @@ internal fun PersistedAgentState.toRuntimeState(): AgentRuntimeState = AgentRunt
     lastActionSummary = lastActionSummary,
     hasEntered = hasEntered,
     silenceStreak = silenceStreak,
+    peerInteractionTarget = peerInteractionTarget,
+    peerInteractionStreak = peerInteractionStreak,
     socialProfile = socialProfile,
     workingMemory = ArrayDeque(workingMemory),
     episodicMemory = ArrayDeque(episodicMemory),

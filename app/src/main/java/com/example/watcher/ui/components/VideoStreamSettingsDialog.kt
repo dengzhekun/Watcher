@@ -37,11 +37,17 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.watcher.R
+import com.example.watcher.data.model.DeviceRuntimeInfo
 import com.example.watcher.data.model.DeviceProvisionUiState
 import com.example.watcher.data.model.DiscoveredStreamDevice
 import com.example.watcher.data.model.DiscoveredStreamDeviceKind
+import com.example.watcher.data.model.LEGACY_PROVISION_WIFI_SSID_MAX_BYTES
 import com.example.watcher.data.model.StreamScanUiState
 import com.example.watcher.data.model.VideoStreamSettings
+import com.example.watcher.data.model.exceedsLegacyProvisionWifiSsidLimit
+import com.example.watcher.data.model.normalizedProvisionWifiSsid
+import com.example.watcher.data.model.provisionWifiSsidUtf8Length
+import com.example.watcher.data.model.validateProvisionWifiPassword
 
 @Composable
 fun VideoStreamSettingsDialog(
@@ -126,6 +132,10 @@ fun VideoStreamSettingsDialog(
         provisionState.isClearingWifi ||
         provisionState.isWaitingForReconnect ||
         provisionState.isFindingProvisionedDevice
+    val normalizedWifiSsid = normalizedProvisionWifiSsid(wifiSsid)
+    val wifiSsidBytes = provisionWifiSsidUtf8Length(wifiSsid)
+    val exceedsLegacySsidLimit = normalizedWifiSsid.isNotBlank() && exceedsLegacyProvisionWifiSsidLimit(wifiSsid)
+    val wifiPasswordError = validateProvisionWifiPassword(wifiPassword)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -329,6 +339,13 @@ fun VideoStreamSettingsDialog(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    if (info.hasWifiConnectFailure) {
+                                        Text(
+                                            text = buildDeviceProvisionFailureHint(info),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -352,6 +369,15 @@ fun VideoStreamSettingsDialog(
                             label = { Text("目标 Wi-Fi 名称") },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
+                            supportingText = {
+                                Text(
+                                    if (exceedsLegacySsidLimit) {
+                                        "当前为 $wifiSsidBytes 字节。App 已允许提交；但现有设备固件大概率仍按 $LEGACY_PROVISION_WIFI_SSID_MAX_BYTES 字节限制处理，硬件适配前可能会被拒绝。"
+                                    } else {
+                                        "当前 $wifiSsidBytes 字节。中文 Wi-Fi 名称可直接输入并提交。"
+                                    }
+                                )
+                            },
                             colors = textFieldColors
                         )
                         OutlinedTextField(
@@ -360,6 +386,13 @@ fun VideoStreamSettingsDialog(
                             label = { Text("Wi-Fi 密码") },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
+                            isError = wifiPasswordError != null,
+                            supportingText = {
+                                Text(
+                                    wifiPasswordError
+                                        ?: "留空表示开放网络；非空密码必须为 8 到 64 个字符。"
+                                )
+                            },
                             colors = textFieldColors
                         )
                         provisionState.wifiNetworks.forEach { network ->
@@ -377,7 +410,9 @@ fun VideoStreamSettingsDialog(
                         ) {
                             FilledTonalButton(
                                 onClick = { onSubmitProvisionWifi(wifiSsid, wifiPassword) },
-                                enabled = !provisioningBusy && wifiSsid.isNotBlank(),
+                                enabled = !provisioningBusy &&
+                                    normalizedWifiSsid.isNotEmpty() &&
+                                    wifiPasswordError == null,
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(18.dp)
                             ) {
@@ -493,7 +528,7 @@ fun VideoStreamSettingsDialog(
                             notificationCooldownSeconds = notificationCooldownSeconds.toIntOrNull() ?: 20,
                             videoAnalysisStreamingEnabled = videoAnalysisStreamingEnabled,
                             deviceProfile = deviceProfile,
-                            preferredWifiSsid = wifiSsid.trim()
+                            preferredWifiSsid = wifiSsid
                         )
                     )
                 },
@@ -770,4 +805,18 @@ private fun isSelectedDevice(
     return currentHost.trim() == device.host &&
         currentPort == device.preferredPort &&
         currentProfile == expectedProfile
+}
+
+private fun buildDeviceProvisionFailureHint(info: DeviceRuntimeInfo): String {
+    return when (info.wifiConnectResult) {
+        "wifi_unsupported_ssid_length" -> {
+            "设备已保存该 Wi-Fi，但芯片/驱动不支持当前 SSID 字节长度。当前 ${info.wifiSsidBytes} 字节。"
+        }
+        "wifi_connect_failed" -> {
+            "设备已保存该 Wi-Fi，但重连失败并回退热点。状态=${info.wifiConnectStatus}，断开原因=${info.wifiDisconnectReason}。"
+        }
+        else -> {
+            "设备配网后未成功联网，结果=${info.wifiConnectResult}，状态=${info.wifiConnectStatus}。"
+        }
+    }
 }

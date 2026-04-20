@@ -17,11 +17,9 @@ import kotlinx.coroutines.flow.Flow
 
 class IntentRepository(
     private val apiService: DoubaoApiService,
-    private val taskDao: MonitorTaskDao
+    private val taskDao: MonitorTaskDao,
+    private val llmWalletRepository: LlmWalletRepository
 ) {
-    private val model = ArkConfig.intentModel
-    private val apiKey = ArkConfig.apiKey
-
     suspend fun analyzeIntent(
         userInput: String,
         frame: Bitmap? = null,
@@ -29,20 +27,15 @@ class IntentRepository(
         baselineImagePath: String? = null,
         persist: Boolean = true
     ): Result<IntentResult> {
-        if (apiKey.isBlank()) {
-            return Result.failure(
-                Exception("\u672A\u914D\u7F6E API_KEY\uFF0C\u8BF7\u5148\u5728 local.properties \u4E2D\u8BBE\u7F6E\u540E\u518D\u89E3\u6790\u4EFB\u52A1\u3002")
-            )
-        }
-
         return try {
+            val llmConfig = llmWalletRepository.resolveArkResponsesConfig(ArkConfig.intentModel)
             val encodedFrame = frame?.let { bitmap ->
                 val base64 = BitmapEncoding.toBase64(bitmap)
                 base64 to "data:image/jpeg;base64,$base64"
             }
             val response = if (frame != null) {
                 val request = DoubaoImageRequest(
-                    model = model,
+                    model = llmConfig.modelName,
                     input = listOf(
                         ImageMessage(
                             role = "system",
@@ -67,12 +60,12 @@ class IntentRepository(
                 )
 
                 apiService.analyzeImage(
-                    authorization = "Bearer $apiKey",
+                    authorization = llmConfig.bearerToken(),
                     request = request
                 )
             } else {
                 val request = DoubaoRequest(
-                    model = model,
+                    model = llmConfig.modelName,
                     input = listOf(
                         Message(
                             role = "system",
@@ -94,7 +87,7 @@ class IntentRepository(
                 )
 
                 apiService.analyzeIntent(
-                    authorization = "Bearer $apiKey",
+                    authorization = llmConfig.bearerToken(),
                     request = request
                 )
             }

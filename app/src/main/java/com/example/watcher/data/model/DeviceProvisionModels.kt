@@ -13,10 +13,23 @@ data class DeviceRuntimeInfo(
     val discoveryPort: Int = 32108,
     val mdnsUrl: String = "",
     val mdnsActive: Boolean = false,
-    val streamUrl: String = ""
+    val streamUrl: String = "",
+    val wifiConnectResult: String = "",
+    val wifiConnectStatus: Int = 0,
+    val wifiConnectEspErr: Int = 0,
+    val wifiDisconnectReason: Int = 0,
+    val wifiFallbackToAp: Boolean = false,
+    val wifiSsidBytes: Int = 0
 ) {
     val isApMode: Boolean
         get() = mode.equals("ap", ignoreCase = true)
+
+    val isStaMode: Boolean
+        get() = mode.equals("sta", ignoreCase = true)
+
+    val hasWifiConnectFailure: Boolean
+        get() = wifiConnectResult.isNotBlank() &&
+            !wifiConnectResult.equals("success", ignoreCase = true)
 }
 
 data class ProvisionWifiNetwork(

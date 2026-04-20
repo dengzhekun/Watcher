@@ -16,13 +16,13 @@ class VideoStreamSettingsTest {
     }
 
     @Test
-    fun normalizedFallsBackToFixedDeviceIpAndTrimsPreferredWifi() {
+    fun normalizedFallsBackToFixedDeviceIpAndKeepsPreferredWifiRaw() {
         val normalized = VideoStreamSettings(
             ipAddress = "   ",
             preferredWifiSsid = "  HomeWiFi  "
         ).normalized()
 
         assertEquals(VideoStreamSettings.DEFAULT_DEVICE_IP, normalized.ipAddress)
-        assertEquals("HomeWiFi", normalized.preferredWifiSsid)
+        assertEquals("  HomeWiFi  ", normalized.preferredWifiSsid)
     }
 }

@@ -5,15 +5,19 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="database" path="watcher_database" />
+        <exclude domain="database" path="watcher_database-wal" />
+        <exclude domain="database" path="watcher_database-shm" />
+        <exclude domain="sharedpref" path="llm_wallet_prefs.xml" />
+        <exclude domain="sharedpref" path="llm_wallet_secrets.xml" />
+        <exclude domain="file" path="agentframework/" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="database" path="watcher_database" />
+        <exclude domain="database" path="watcher_database-wal" />
+        <exclude domain="database" path="watcher_database-shm" />
+        <exclude domain="sharedpref" path="llm_wallet_prefs.xml" />
+        <exclude domain="sharedpref" path="llm_wallet_secrets.xml" />
+        <exclude domain="file" path="agentframework/" />
     </device-transfer>
-    -->
 </data-extraction-rules>

@@ -44,9 +44,14 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.watcher.AgentConfigActivity
+import com.example.watcher.ApiWalletActivity
+import com.example.watcher.DigitalLifeCardActivity
+import com.example.watcher.LiteRtActivity
 import com.example.watcher.data.model.AiAudienceEntity
 import com.example.watcher.data.model.AiAudienceLiveState
 import com.example.watcher.data.model.DanmakuItem
+import com.example.watcher.data.model.InteractionMode
 import com.example.watcher.data.model.LiveCommentaryState
 import com.example.watcher.data.model.LiveSpeechState
 import com.example.watcher.data.model.LlmProviderEntity
@@ -112,11 +117,17 @@ fun MainScreen(
     val selectedHistoryDetail by viewModel.selectedHistoryDetail.collectAsStateWithLifecycle()
     val monitorTemplates by viewModel.monitorTemplatesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val videoTemplates by viewModel.videoTemplatesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val councilTemplates by viewModel.councilTemplatesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val councilExperts by viewModel.councilExpertsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val liveCommentaryState by viewModel.liveCommentaryState.collectAsStateWithLifecycle()
     val aiAudienceState by viewModel.aiAudienceLiveState.collectAsStateWithLifecycle()
     val llmProviders by viewModel.llmProvidersFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val aiAudiences by viewModel.aiAudiencesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val liveSpeechState by viewModel.liveSpeechState.collectAsStateWithLifecycle()
+    val interactionMode by viewModel.interactionMode.collectAsStateWithLifecycle()
+    val councilState by viewModel.councilState.collectAsStateWithLifecycle()
+    val councilEntryUiState by viewModel.councilEntryUiState.collectAsStateWithLifecycle()
+    val gatewayRunning by viewModel.gatewayRunning.collectAsStateWithLifecycle()
 
     var monitorRequestText by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue())
@@ -184,32 +195,45 @@ fun MainScreen(
         }
     }
 
-    // Live room confirmation gate
-    var liveConfirmed by remember { mutableStateOf(false) }
-    var showLiveConfirmDialog by remember { mutableStateOf(false) }
+    var immersiveSessionActive by remember { mutableStateOf(false) }
+    var showImmersiveEntryDialog by remember { mutableStateOf(false) }
 
-    // When entering landscape, show confirmation; when leaving, stop services
-    LaunchedEffect(isLandscape) {
-        if (isLandscape) {
-            if (!liveConfirmed) {
-                showLiveConfirmDialog = true
-            }
-        } else {
-            if (liveConfirmed) {
-                viewModel.stopLiveCommentary()
-                viewModel.stopAiAudience()
-                viewModel.stopLiveSpeech()
-                liveConfirmed = false
+    val lockLandscape: () -> Unit = remember(context) {
+        {
+            (context as? Activity)?.requestedOrientation =
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+    }
+
+    val unlockOrientation: () -> Unit = remember(context) {
+        {
+            (context as? Activity)?.requestedOrientation =
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                (context as? Activity)?.requestedOrientation =
+                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+            }, 1000)
+        }
+    }
+
+    val stopCurrentImmersiveMode: () -> Unit = remember(viewModel, interactionMode) {
+        {
+            when (interactionMode) {
+                InteractionMode.Live -> {
+                    viewModel.stopLiveCommentary()
+                    viewModel.stopAiAudience()
+                    viewModel.stopLiveSpeech()
+                }
+                InteractionMode.Council -> viewModel.stopCouncilMode()
+                InteractionMode.Off -> Unit
             }
         }
     }
 
-    // Start services only after user confirms
-    LaunchedEffect(liveConfirmed) {
-        if (liveConfirmed) {
-            viewModel.startLiveCommentary()
-            viewModel.startAiAudience()
-            viewModel.startLiveSpeech()
+    // Show entry dialog when user rotates to landscape (only if not already in a session)
+    LaunchedEffect(isLandscape) {
+        if (isLandscape && !immersiveSessionActive && interactionMode == InteractionMode.Off) {
+            showImmersiveEntryDialog = true
         }
     }
 
@@ -257,6 +281,24 @@ fun MainScreen(
         }
     }
 
+    val digitalLifeCardLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (settings.streamUrl.isNotBlank()) {
+            viewModel.setStreamPlaying(true)
+            viewModel.reconnectStream()
+        }
+    }
+
+    val liteRtLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (settings.streamUrl.isNotBlank()) {
+            viewModel.setStreamPlaying(true)
+            viewModel.reconnectStream()
+        }
+    }
+
     val baselineImagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
@@ -293,80 +335,85 @@ fun MainScreen(
         }
     }
 
-    // Confirmation dialog
-    if (showLiveConfirmDialog) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = {
-                showLiveConfirmDialog = false
-                // Force back to portrait
-                (context as? Activity)?.requestedOrientation =
-                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                // Reset after a delay to allow sensor again
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    (context as? Activity)?.requestedOrientation =
-                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
-                }, 1000)
+    if (showImmersiveEntryDialog) {
+        LandscapeModeEntryDialog(
+            councilTemplates = councilTemplates,
+            entryState = councilEntryUiState,
+            onGenerate = viewModel::generateCouncilEntryConfig,
+            onSaveGeneratedTemplate = viewModel::saveGeneratedCouncilTemplate,
+            onDismiss = {
+                showImmersiveEntryDialog = false
+                unlockOrientation()
             },
-            title = { androidx.compose.material3.Text("进入直播模式") },
-            text = {
-                androidx.compose.material3.Text("本功能对网络和 Token 消耗较高，确认是否进入直播模式？")
+            onStartLive = {
+                showImmersiveEntryDialog = false
+                immersiveSessionActive = true
+                lockLandscape()
+                viewModel.startLiveCommentary()
+                viewModel.startAiAudience()
+                viewModel.startLiveSpeech()
             },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
-                    showLiveConfirmDialog = false
-                    liveConfirmed = true
-                }) { androidx.compose.material3.Text("确认进入") }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = {
-                    showLiveConfirmDialog = false
-                    (context as? Activity)?.requestedOrientation =
-                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                        (context as? Activity)?.requestedOrientation =
-                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
-                    }, 1000)
-                }) { androidx.compose.material3.Text("取消") }
+            onStartCouncil = { config ->
+                showImmersiveEntryDialog = false
+                immersiveSessionActive = true
+                lockLandscape()
+                viewModel.startCouncilMode(config)
             }
         )
     }
 
-    // Exit live room function
-    val exitLiveRoom: () -> Unit = remember(context) {
+    val exitImmersiveRoom: () -> Unit = remember(context, stopCurrentImmersiveMode) {
         {
-            liveConfirmed = false
-            viewModel.stopLiveCommentary()
-            viewModel.stopAiAudience()
-            viewModel.stopLiveSpeech()
-            (context as? Activity)?.requestedOrientation =
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                (context as? Activity)?.requestedOrientation =
-                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
-            }, 1000)
+            immersiveSessionActive = false
+            stopCurrentImmersiveMode()
+            unlockOrientation()
             Unit
         }
     }
 
-    if (isLandscape && liveConfirmed) {
-        LiveRoomScreen(
-            streamState = streamState,
-            isPlaying = isStreamPlaying,
-            settings = settings,
-            commentaryState = liveCommentaryState,
-            aiAudienceState = aiAudienceState,
-            danmakuFlow = viewModel.danmakuFlow,
-            audiences = aiAudiences,
-            onPlayingChange = viewModel::setStreamPlaying,
-            onReconnectStream = viewModel::reconnectStream,
-            onCaptureSnapshot = captureSnapshot,
-            speechState = liveSpeechState,
-            onMicToggle = viewModel::setLiveSpeechMicEnabled,
-            onResetLiveRoom = viewModel::resetLiveRoom,
-            onSaveAudience = viewModel::saveAudience,
-            onExitLiveRoom = exitLiveRoom,
-        )
-        return
+    if (immersiveSessionActive) {
+        when (interactionMode) {
+            InteractionMode.Live -> {
+                LiveRoomScreen(
+                    streamState = streamState,
+                    isPlaying = isStreamPlaying,
+                    settings = settings,
+                    commentaryState = liveCommentaryState,
+                    aiAudienceState = aiAudienceState,
+                    danmakuFlow = viewModel.danmakuFlow,
+                    audiences = aiAudiences,
+                    onPlayingChange = viewModel::setStreamPlaying,
+                    onReconnectStream = viewModel::reconnectStream,
+                    onCaptureSnapshot = captureSnapshot,
+                    speechState = liveSpeechState,
+                    onMicToggle = viewModel::setLiveSpeechMicEnabled,
+                    onResetLiveRoom = viewModel::resetLiveRoom,
+                    onSaveAudience = viewModel::saveAudience,
+                    onExitLiveRoom = exitImmersiveRoom,
+                )
+                return
+            }
+
+            InteractionMode.Council -> {
+                CouncilModeScreen(
+                    streamState = streamState,
+                    isPlaying = isStreamPlaying,
+                    settings = settings,
+                    commentaryState = liveCommentaryState,
+                    speechState = liveSpeechState,
+                    councilState = councilState,
+                    onPlayingChange = viewModel::setStreamPlaying,
+                    onReconnectStream = viewModel::reconnectStream,
+                    onCaptureSnapshot = captureSnapshot,
+                    onMicToggle = viewModel::setLiveSpeechMicEnabled,
+                    onTriggerAnalysis = { viewModel.triggerCouncilAnalysis("manual_ui") },
+                    onExit = exitImmersiveRoom
+                )
+                return
+            }
+
+            InteractionMode.Off -> Unit
+        }
     }
 
     Scaffold(
@@ -441,6 +488,8 @@ fun MainScreen(
                         onReconnectStream = viewModel::reconnectStream,
                         onCaptureSnapshot = captureSnapshot,
                         onOpenSettings = { showSettingsDialog = true },
+                        onOpenAgentConfig = { context.startActivity(AgentConfigActivity.createIntent(context)) },
+                        onOpenWalletConfig = { context.startActivity(ApiWalletActivity.createIntent(context)) },
                         currentPage = HubPage.Monitor,
                         pageOffset = pageOffset
                     )
@@ -457,8 +506,18 @@ fun MainScreen(
                         onReconnectStream = viewModel::reconnectStream,
                         onCaptureSnapshot = captureSnapshot,
                         onOpenSettings = { showSettingsDialog = true },
+                        onOpenAgentConfig = { context.startActivity(AgentConfigActivity.createIntent(context)) },
+                        onOpenWalletConfig = { context.startActivity(ApiWalletActivity.createIntent(context)) },
                         onNavigateMonitor = { navigateTo(HubPage.Monitor) },
                         onNavigateAnalysis = { navigateTo(HubPage.Analysis) },
+                        onNavigateDigitalLifeCard = {
+                            viewModel.setStreamPlaying(false)
+                            viewModel.updateVideoFrame(null)
+                            digitalLifeCardLauncher.launch(DigitalLifeCardActivity.createIntent(context))
+                        },
+                        onNavigateLiteRt = {
+                            liteRtLauncher.launch(LiteRtActivity.createIntent(context))
+                        },
                         currentPage = HubPage.Hub,
                         pageOffset = pageOffset
                     )
@@ -509,6 +568,8 @@ fun MainScreen(
                         onReconnectStream = viewModel::reconnectStream,
                         onCaptureSnapshot = captureSnapshot,
                         onOpenSettings = { showSettingsDialog = true },
+                        onOpenAgentConfig = { context.startActivity(AgentConfigActivity.createIntent(context)) },
+                        onOpenWalletConfig = { context.startActivity(ApiWalletActivity.createIntent(context)) },
                         currentPage = HubPage.Analysis,
                         pageOffset = pageOffset
                     )
@@ -521,6 +582,8 @@ fun MainScreen(
                         onSelectRecord = viewModel::selectHistoryRecord,
                         onDeleteRecord = viewModel::deleteHistoryRecord,
                         onOpenSettings = { showSettingsDialog = true },
+                        onOpenAgentConfig = { context.startActivity(AgentConfigActivity.createIntent(context)) },
+                        onOpenWalletConfig = { context.startActivity(ApiWalletActivity.createIntent(context)) },
                         currentPage = HubPage.History,
                         isVisible = currentPage == HubPage.History,
                         pageOffset = pageOffset
@@ -529,15 +592,28 @@ fun MainScreen(
                     HubPage.Templates -> TemplateManagementPage(
                         monitorTemplates = monitorTemplates,
                         videoTemplates = videoTemplates,
+                        councilTemplates = councilTemplates,
+                        councilExperts = councilExperts,
                         providers = llmProviders,
                         audiences = aiAudiences,
                         onUpdateMonitorTemplate = viewModel::updateMonitorTemplate,
                         onUpdateVideoTemplate = viewModel::updateVideoTemplate,
+                        onUpdateCouncilTemplate = viewModel::updateCouncilTemplate,
                         onResetMonitorTemplate = viewModel::resetMonitorTemplate,
                         onResetVideoTemplate = viewModel::resetVideoTemplate,
+                        onResetCouncilTemplate = viewModel::resetCouncilTemplate,
+                        onCreateCouncilExpert = viewModel::addCouncilExpert,
+                        onSaveCouncilExpert = viewModel::saveCouncilExpert,
+                        onDuplicateCouncilExpert = viewModel::duplicateCouncilExpert,
+                        onResetCouncilExpert = viewModel::resetCouncilExpert,
+                        onDeleteCouncilExpert = viewModel::deleteCouncilExpert,
+                        onRestoreMissingCouncilExperts = viewModel::restoreMissingCouncilExperts,
                         onDeleteMonitorTemplate = viewModel::deleteMonitorTemplate,
                         onDeleteVideoTemplate = viewModel::deleteVideoTemplate,
+                        onDeleteCouncilTemplate = viewModel::deleteCouncilTemplate,
                         onOpenSettings = { showSettingsDialog = true },
+                        onOpenAgentConfig = { context.startActivity(AgentConfigActivity.createIntent(context)) },
+                        onOpenWalletConfig = { context.startActivity(ApiWalletActivity.createIntent(context)) },
                         onSaveProvider = viewModel::saveProvider,
                         onDeleteProvider = viewModel::deleteProvider,
                         onSaveAudience = viewModel::saveAudience,
@@ -547,11 +623,23 @@ fun MainScreen(
                         getAgentDebugSnapshot = viewModel::getAgentAudienceDebugSnapshot,
                         getWallet = viewModel::getAudienceWallet,
                         setWallet = viewModel::setAudienceWallet,
+                        getCouncilExpertLastPrompt = viewModel::getCouncilExpertLastPrompt,
+                        getCouncilExpertLastResponse = viewModel::getCouncilExpertLastResponse,
+                        getExpertSessionMemory = viewModel::getCouncilExpertSessionMemory,
+                        getExpertKnowledge = viewModel::getExpertKnowledge,
+                        onDeleteKnowledge = viewModel::deleteKnowledgeEntry,
                         getMemorySnapshot = viewModel::getMemorySnapshot,
                         commentaryState = liveCommentaryState,
                         onExportMonitor = viewModel::exportMonitorTemplate,
                         onExportVideo = viewModel::exportVideoTemplate,
+                        onExportCouncil = viewModel::exportCouncilTemplate,
+                        onExportCouncilExpert = viewModel::exportCouncilExpertTemplate,
                         onImportTemplate = viewModel::importTemplate,
+                        gatewayRunning = gatewayRunning,
+                        gatewayPort = viewModel.gatewayPort,
+                        gatewayApiKey = viewModel.gatewayApiKey,
+                        gatewayLocalIp = viewModel.getLocalIpAddress(),
+                        onToggleGateway = viewModel::toggleGateway,
                         currentPage = HubPage.Templates,
                         pageOffset = pageOffset
                     )
@@ -598,6 +686,7 @@ fun MainScreen(
             }
         )
     }
+
 }
 
 @Composable

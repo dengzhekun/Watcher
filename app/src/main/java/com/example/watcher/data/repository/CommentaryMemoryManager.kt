@@ -6,11 +6,14 @@ import com.example.watcher.data.remote.DoubaoApiService
 import com.example.watcher.data.remote.DoubaoRequest
 import com.example.watcher.data.remote.Message
 import com.example.watcher.data.remote.extractOutputText
+import com.example.watcher.data.model.CommentaryPromptProfile
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 class CommentaryMemoryManager(
-    private val apiService: DoubaoApiService
+    private val apiService: DoubaoApiService,
+    private val llmWalletRepository: LlmWalletRepository,
+    private val promptProfile: CommentaryPromptProfile = CommentaryPromptProfile.liveRoom()
 ) {
     companion object {
         private const val TAG = "CommentaryMemory"
@@ -18,9 +21,6 @@ class CommentaryMemoryManager(
         const val A_COMPRESS_THRESHOLD = 10
         const val RECENT_VISUAL_COUNT = 3
     }
-
-    private val apiKey = ArkConfig.apiKey
-    private val compressionModel = ArkConfig.intentModel
 
     var memoryA: String = ""
         private set
@@ -36,7 +36,7 @@ class CommentaryMemoryManager(
     suspend fun onNewCommentary(text: String) = mutex.withLock {
         recentVisual.addLast(System.currentTimeMillis() to text)
         while (recentVisual.size > RECENT_VISUAL_COUNT) {
-            recentVisual.removeFirst()
+            recentVisual.removeAt(0)
         }
         rawSinceLastB.add("[画面] $text")
         if (rawSinceLastB.size >= B_COMPRESS_THRESHOLD) {
@@ -83,8 +83,9 @@ class CommentaryMemoryManager(
 
         Log.d(TAG, "Compressing ${texts.size} entries to memory B")
         try {
+            val llmConfig = llmWalletRepository.resolveArkResponsesConfig(ArkConfig.intentModel)
             val prompt = buildString {
-                appendLine("你是直播内容记忆压缩助手。以下内容包含[画面]解说和[语音]转写两种来源。请提取关键信息，压缩为一段简洁摘要（100字以内）。只返回摘要文本。")
+                appendLine(promptProfile.memoryBRole)
                 appendLine()
                 texts.forEachIndexed { i, t ->
                     appendLine("${i + 1}. $t")
@@ -92,9 +93,9 @@ class CommentaryMemoryManager(
             }
 
             val response = apiService.analyzeIntent(
-                authorization = "Bearer $apiKey",
+                authorization = llmConfig.bearerToken(),
                 request = DoubaoRequest(
-                    model = compressionModel,
+                    model = llmConfig.modelName,
                     input = listOf(
                         Message(
                             role = "user",
@@ -127,8 +128,9 @@ class CommentaryMemoryManager(
 
         Log.d(TAG, "Compressing ${bTexts.size} memory B entries to memory A")
         try {
+            val llmConfig = llmWalletRepository.resolveArkResponsesConfig(ArkConfig.intentModel)
             val prompt = buildString {
-                appendLine("你是直播核心记忆管理助手。根据当前核心记忆和最近的中期摘要，更新核心记忆。保留最重要的人物、场景、事件信息（200字以内）。只返回更新后的核心记忆文本。")
+                appendLine(promptProfile.memoryARole)
                 appendLine()
                 appendLine("当前核心记忆：${memoryA.ifBlank { "暂无" }}")
                 appendLine()
@@ -139,9 +141,9 @@ class CommentaryMemoryManager(
             }
 
             val response = apiService.analyzeIntent(
-                authorization = "Bearer $apiKey",
+                authorization = llmConfig.bearerToken(),
                 request = DoubaoRequest(
-                    model = compressionModel,
+                    model = llmConfig.modelName,
                     input = listOf(
                         Message(
                             role = "user",

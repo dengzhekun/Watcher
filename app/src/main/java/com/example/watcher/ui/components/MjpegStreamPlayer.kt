@@ -68,8 +68,16 @@ data class MjpegStreamUiState(
     val currentFrame: Bitmap? = null,
     val connectionStatus: ConnectionStatus = ConnectionStatus.Disconnected,
     val fps: Int = 0,
-    val activeStreamUrl: String? = null
+    val activeStreamUrl: String? = null,
+    val source: StreamSource = StreamSource.None,
+    val sourceLabel: String = ""
 )
+
+enum class StreamSource {
+    None,
+    RemoteMjpeg,
+    FrontCameraFallback
+}
 
 @Composable
 fun rememberMjpegStreamState(
@@ -82,22 +90,39 @@ fun rememberMjpegStreamState(
     var connectionStatus by remember { mutableStateOf<ConnectionStatus>(ConnectionStatus.Disconnected) }
     var fps by remember { mutableStateOf(0) }
     var activeStreamUrl by remember { mutableStateOf<String?>(null) }
+    var source by remember { mutableStateOf(StreamSource.None) }
+    var sourceLabel by remember { mutableStateOf("") }
+    var fallbackRequested by remember { mutableStateOf(false) }
+
+    val fallbackState = rememberFrontCameraFallbackState(
+        active = isPlaying && fallbackRequested,
+        reconnectToken = reconnectToken,
+        onFrameUpdate = onFrameUpdate
+    )
 
     LaunchedEffect(isPlaying, settings.streamUrl, reconnectToken) {
         if (!isPlaying) {
+            fallbackRequested = false
             connectionStatus = ConnectionStatus.Disconnected
             currentFrame = null
             fps = 0
             activeStreamUrl = null
+            source = StreamSource.None
+            sourceLabel = ""
             onFrameUpdate(null)
             return@LaunchedEffect
         }
 
+        fallbackRequested = false
         connectionStatus = ConnectionStatus.Connecting
+        source = StreamSource.RemoteMjpeg
+        sourceLabel = settings.streamDisplayUrl
+        activeStreamUrl = settings.streamDisplayUrl
         withContext(Dispatchers.IO) {
+            var shouldUseFallback = false
             try {
                 val client = OkHttpClient.Builder()
-                    .connectTimeout(10, TimeUnit.SECONDS)
+                    .connectTimeout(4, TimeUnit.SECONDS)
                     .readTimeout(0, TimeUnit.SECONDS)
                     .build()
                 var lastError: String? = null
@@ -135,6 +160,8 @@ fun rememberMjpegStreamState(
                         val reader = MjpegReader(BufferedInputStream(body.byteStream(), 8_192))
                         withContext(Dispatchers.Main) {
                             connectionStatus = ConnectionStatus.Connected
+                            source = StreamSource.RemoteMjpeg
+                            sourceLabel = settings.streamDisplayUrl
                         }
 
                         var frameCount = 0
@@ -146,6 +173,8 @@ fun rememberMjpegStreamState(
                                 if (frame != null) {
                                     withContext(Dispatchers.Main) {
                                         currentFrame = frame
+                                        source = StreamSource.RemoteMjpeg
+                                        sourceLabel = settings.streamDisplayUrl
                                         onFrameUpdate(frame)
                                     }
                                     frameCount += 1
@@ -163,58 +192,89 @@ fun rememberMjpegStreamState(
                             } catch (error: Exception) {
                                 Log.e("MjpegStream", "Failed to read frame", error)
                                 lastError = error.message ?: "Stream read failed"
-                                withContext(Dispatchers.Main) {
-                                    connectionStatus = ConnectionStatus.Error(lastError ?: "Stream read failed")
-                                }
+                                shouldUseFallback = true
                                 break
                             }
                         }
 
-                        if (connectionStatus is ConnectionStatus.Connected) {
+                        if (!shouldUseFallback && connectionStatus is ConnectionStatus.Connected) {
                             return@withContext
                         }
 
                         if (index == settings.candidateStreamUrls.lastIndex) {
-                            withContext(Dispatchers.Main) {
-                                connectionStatus = ConnectionStatus.Error(lastError ?: "Connection failed")
-                            }
+                            shouldUseFallback = true
                         } else {
                             withContext(Dispatchers.Main) {
                                 connectionStatus = ConnectionStatus.Connecting
                                 currentFrame = null
                                 fps = 0
-                                activeStreamUrl = null
+                                activeStreamUrl = settings.streamDisplayUrl
+                                source = StreamSource.RemoteMjpeg
+                                sourceLabel = settings.streamDisplayUrl
                                 onFrameUpdate(null)
                             }
                         }
                     }
+
+                    if (shouldUseFallback) {
+                        break
+                    }
                 }
             } catch (error: Exception) {
                 Log.e("MjpegStream", "Failed to connect stream", error)
-                withContext(Dispatchers.Main) {
-                    connectionStatus = ConnectionStatus.Error(
-                        formatStreamConnectionError(error, settings)
-                    )
-                }
+                shouldUseFallback = true
             } finally {
                 withContext(Dispatchers.Main) {
-                    currentFrame = null
-                    fps = 0
-                    activeStreamUrl = null
-                    onFrameUpdate(null)
-                    if (connectionStatus is ConnectionStatus.Connected) {
-                        connectionStatus = ConnectionStatus.Disconnected
+                    if (shouldUseFallback) {
+                        fallbackRequested = true
+                        currentFrame = null
+                        fps = 0
+                        activeStreamUrl = FRONT_CAMERA_SOURCE_LABEL
+                        source = StreamSource.FrontCameraFallback
+                        sourceLabel = FRONT_CAMERA_SOURCE_LABEL
+                        connectionStatus = if (fallbackState.permissionDenied) {
+                            ConnectionStatus.Error(
+                                "ESP32 视频流不可用，且前置摄像头权限未授予。"
+                            )
+                        } else {
+                            ConnectionStatus.Connecting
+                        }
+                        onFrameUpdate(null)
+                    } else {
+                        currentFrame = null
+                        fps = 0
+                        activeStreamUrl = null
+                        source = StreamSource.None
+                        sourceLabel = ""
+                        onFrameUpdate(null)
+                        if (connectionStatus is ConnectionStatus.Connected) {
+                            connectionStatus = ConnectionStatus.Disconnected
+                        }
                     }
                 }
             }
         }
     }
 
+    LaunchedEffect(fallbackRequested, fallbackState) {
+        if (!fallbackRequested) {
+            return@LaunchedEffect
+        }
+        currentFrame = fallbackState.currentFrame
+        connectionStatus = fallbackState.connectionStatus
+        fps = fallbackState.fps
+        activeStreamUrl = fallbackState.sourceLabel
+        source = StreamSource.FrontCameraFallback
+        sourceLabel = fallbackState.sourceLabel
+    }
+
     return MjpegStreamUiState(
         currentFrame = currentFrame,
         connectionStatus = connectionStatus,
         fps = fps,
-        activeStreamUrl = activeStreamUrl
+        activeStreamUrl = activeStreamUrl,
+        source = source,
+        sourceLabel = sourceLabel
     )
 }
 
@@ -262,7 +322,7 @@ fun MjpegStreamPlayer(
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        text = settings.streamDisplayUrl,
+                        text = streamState.sourceLabel.ifBlank { settings.streamDisplayUrl },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -373,7 +433,12 @@ fun MjpegStreamPlayer(
 
             if (streamState.connectionStatus is ConnectionStatus.Connected) {
                 Text(
-                    text = stringResource(R.string.stream_fps, streamState.fps),
+                    text = buildString {
+                        append(stringResource(R.string.stream_fps, streamState.fps))
+                        if (streamState.source == StreamSource.FrontCameraFallback) {
+                            append(" · 前摄降级")
+                        }
+                    },
                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.tertiary
                 )

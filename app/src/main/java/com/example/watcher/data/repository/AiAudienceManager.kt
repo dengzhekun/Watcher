@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import android.util.Log
 import com.example.watcher.data.local.AiAudienceDao
 import com.example.watcher.data.local.AiAudienceMessageDao
-import com.example.watcher.data.local.LlmProviderDao
 import com.example.watcher.data.model.AiAudienceEntity
 import com.example.watcher.data.model.AiAudienceLiveState
 import com.example.watcher.data.model.AiAudienceMessageEntity
@@ -42,7 +41,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 class AiAudienceManager(
-    private val providerDao: LlmProviderDao,
+    private val llmWalletRepository: LlmWalletRepository,
     private val audienceDao: AiAudienceDao,
     private val messageDao: AiAudienceMessageDao,
     private val memoryManager: CommentaryMemoryManager,
@@ -107,7 +106,7 @@ class AiAudienceManager(
         observeJob = scope.launch {
             audienceDao.observeAll().collect { allAudiences ->
                 val enabled = allAudiences.filter { it.enabled && it.audienceType == audienceType }
-                val providers = providerDao.getAll()
+                val providers = llmWalletRepository.listProviders()
                 syncHeartbeats(enabled, providers)
             }
         }
@@ -183,7 +182,7 @@ class AiAudienceManager(
             }
 
             val audiences = audienceDao.getEnabled().filter { it.audienceType == audienceType }
-            val providers = providerDao.getAll()
+            val providers = llmWalletRepository.listProviders()
             val memoryA = memoryManager.memoryA
             val memoryB = memoryManager.latestMemoryB
 

@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import com.example.watcher.data.model.CouncilTemplateEntity
 import com.example.watcher.data.model.MonitorTemplateEntity
 import com.example.watcher.data.model.VideoTemplateEntity
 import kotlinx.coroutines.flow.Flow
@@ -39,4 +40,22 @@ interface TemplateDao {
 
     @Query("SELECT COUNT(*) FROM video_templates")
     suspend fun videoTemplateCount(): Int
+
+    @Query("SELECT * FROM council_templates ORDER BY templateId")
+    fun observeCouncilTemplates(): Flow<List<CouncilTemplateEntity>>
+
+    @Query("SELECT * FROM council_templates WHERE templateId = :id")
+    suspend fun getCouncilTemplate(id: String): CouncilTemplateEntity?
+
+    @Query("SELECT * FROM council_templates ORDER BY templateId")
+    suspend fun getAllCouncilTemplates(): List<CouncilTemplateEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertCouncil(template: CouncilTemplateEntity)
+
+    @Query("DELETE FROM council_templates WHERE templateId = :id")
+    suspend fun deleteCouncilTemplate(id: String)
+
+    @Query("SELECT COUNT(*) FROM council_templates")
+    suspend fun councilTemplateCount(): Int
 }

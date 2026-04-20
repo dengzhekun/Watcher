@@ -2,6 +2,9 @@
 
 import com.example.watcher.data.model.DeviceRuntimeInfo
 import com.example.watcher.data.model.ProvisionWifiNetwork
+import com.example.watcher.data.model.normalizedProvisionWifiSsid
+import com.example.watcher.data.model.validateProvisionWifiPassword
+import com.example.watcher.data.model.validateProvisionWifiSsid
 import com.example.watcher.data.remote.DeviceInfoResponse
 import com.example.watcher.data.remote.DeviceProvisionService
 import com.example.watcher.data.remote.WifiScanResponse
@@ -51,9 +54,14 @@ class DeviceProvisionCoordinator(
     }
 
     suspend fun saveWifiConfig(ssid: String, password: String): String {
-        val normalizedSsid = ssid.trim()
+        val normalizedSsid = normalizedProvisionWifiSsid(ssid)
         val rawPassword = password
-        require(normalizedSsid.isNotBlank()) { "Wi-Fi name must not be empty." }
+        validateProvisionWifiSsid(normalizedSsid)?.let { error ->
+            throw IllegalArgumentException(error)
+        }
+        validateProvisionWifiPassword(rawPassword)?.let { error ->
+            throw IllegalArgumentException(error)
+        }
 
         val response = executeWithFallback { service ->
             service.saveWifiConfig(normalizedSsid, rawPassword)
@@ -122,7 +130,13 @@ private fun DeviceInfoResponse?.toRuntimeInfo(): DeviceRuntimeInfo {
         discoveryPort = body.discovery_port,
         mdnsUrl = body.mdns,
         mdnsActive = body.mdns_active,
-        streamUrl = body.stream_url
+        streamUrl = body.stream_url,
+        wifiConnectResult = body.wifi_connect_result,
+        wifiConnectStatus = body.wifi_connect_status,
+        wifiConnectEspErr = body.wifi_connect_esp_err,
+        wifiDisconnectReason = body.wifi_disconnect_reason,
+        wifiFallbackToAp = body.wifi_fallback_to_ap,
+        wifiSsidBytes = body.wifi_ssid_bytes
     )
 }
 
@@ -145,7 +159,8 @@ private fun parseErrorCode(rawBody: String?): String? {
 private fun mapWifiConfigError(error: String?, password: String): String {
     return when (error) {
         "ssid_required" -> "Wi-Fi name must not be empty."
-        "ssid_too_long" -> "Wi-Fi name is too long. Keep it within 32 characters."
+        "ssid_too_long" -> "The current device firmware rejected this Wi-Fi name as too long. The app now allows longer names, but this device still appears to enforce a 32-byte SSID limit."
+        "wifi_unsupported_ssid_encoding" -> "The device firmware could not parse this Wi-Fi name encoding. Make sure the hardware side is running the latest UTF-8 provisioning build."
         "invalid_password_length" -> {
             val passwordLength = password.length
             "Password length is invalid. Current length is $passwordLength, but non-empty passwords must be 8 to 64 characters."

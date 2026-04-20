@@ -1,6 +1,7 @@
 package com.example.watcher.data.model
 
 data class CommentaryEntry(
+    val sessionId: String = "",
     val segmentIndex: Int,
     val wallClockStartTime: Long,
     val displayTimestamp: String,
@@ -22,7 +23,9 @@ enum class CommentaryEntryStatus {
 }
 
 data class LiveCommentaryState(
+    val sessionId: String = "",
     val isActive: Boolean = false,
+    val isDraining: Boolean = false,
     val entries: List<CommentaryEntry> = emptyList(),
     val recordedSegmentCount: Int = 0,
     val analyzedSegmentCount: Int = 0,
@@ -32,5 +35,6 @@ data class LiveCommentaryState(
     val sceneMemory: String = "",
     val entityMemory: String = "",
     val actionSummary: String = "",
-    val pendingAsks: List<String> = emptyList()
+    val pendingAsks: List<String> = emptyList(),
+    val expertRequests: List<String> = emptyList()
 )

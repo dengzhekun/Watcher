@@ -37,7 +37,13 @@ class DeviceInfoParserTest {
               "discovery_port": 32108,
               "mdns": "http://esp32cam-34e3ec.local",
               "mdns_active": true,
-              "stream_url": "http://10.244.205.10:81/stream"
+              "stream_url": "http://10.244.205.10:81/stream",
+              "wifi_connect_result": "success",
+              "wifi_connect_status": 3,
+              "wifi_connect_esp_err": 0,
+              "wifi_disconnect_reason": 0,
+              "wifi_fallback_to_ap": false,
+              "wifi_ssid_bytes": 8
             }
         """.trimIndent()
 
@@ -49,5 +55,8 @@ class DeviceInfoParserTest {
         assertEquals(32108, parsed.discovery_port)
         assertTrue(parsed.mdns_active)
         assertEquals("http://esp32cam-34e3ec.local", parsed.mdns)
+        assertEquals("success", parsed.wifi_connect_result)
+        assertEquals(3, parsed.wifi_connect_status)
+        assertEquals(8, parsed.wifi_ssid_bytes)
     }
 }

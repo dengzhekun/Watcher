@@ -103,7 +103,7 @@ data class VideoStreamSettings(
             changeThresholdPercent = changeThresholdPercent.coerceIn(1, 100),
             notificationCooldownSeconds = notificationCooldownSeconds.coerceIn(5, 300),
             deviceProfile = normalizeDeviceProfile(deviceProfile),
-            preferredWifiSsid = preferredWifiSsid.trim()
+            preferredWifiSsid = preferredWifiSsid
         )
     }
 }
