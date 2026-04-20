@@ -504,6 +504,21 @@ tools/                      辅助脚本
 - `docs/2026-03-26-product-iteration.md`
 - `docs/2026-03-27-product-iteration.md`
 - `docs/2026-04-07-database-field-summary.md`
+- `THIRD_PARTY_NOTICES.md`
+
+## 开源致谢
+
+Watcher 在本地模型能力上使用并参考了来自 Google AI Edge 的 `LiteRT-LM` 开源项目。
+
+- 上游项目：`google-ai-edge/LiteRT-LM`
+- 仓库地址：<https://github.com/google-ai-edge/LiteRT-LM>
+- 许可证：`Apache License 2.0`
+
+本项目中的 `LiteRt` 本地模型入口、端侧模型装载与相关集成能力，是在该开源项目提供的能力基础上继续构建和整合的。
+
+更完整的第三方组件说明、来源和许可证信息见：
+
+- `THIRD_PARTY_NOTICES.md`
 
 ## 当前项目状态
 
