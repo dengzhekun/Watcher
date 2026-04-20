@@ -70,7 +70,7 @@ internal fun GatewaySettingsCard(
                         InfoRow(label = "地址", value = baseUrl, onCopy = {
                             clipboard.setText(AnnotatedString(baseUrl))
                         })
-                        InfoRow(label = "API 密钥", value = apiKey, onCopy = {
+                        InfoRow(label = "API 密钥", value = maskApiKey(apiKey), onCopy = {
                             clipboard.setText(AnnotatedString(apiKey))
                         })
                         InfoRow(label = "能力发现", value = "$baseUrl/api/capabilities")
@@ -80,13 +80,19 @@ internal fun GatewaySettingsCard(
                 }
 
                 Text(
-                    "同局域网设备可通过 mDNS 自动发现此服务，或直接使用上方地址调用 API。",
+                    "同局域网设备可通过 mDNS 自动发现此服务，或直接使用上方地址调用 API。界面默认只显示密钥掩码，复制时才会给出完整值。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
     }
+}
+
+private fun maskApiKey(apiKey: String): String {
+    if (apiKey.isBlank()) return "未生成"
+    if (apiKey.length <= 8) return "*".repeat(apiKey.length)
+    return "${apiKey.take(4)}****${apiKey.takeLast(4)}"
 }
 
 @Composable

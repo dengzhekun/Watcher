@@ -14,6 +14,13 @@ val localProperties = Properties().apply {
     }
 }
 
+fun buildConfigString(value: String): String {
+    val escaped = value
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+    return "\"$escaped\""
+}
+
 android {
     namespace = "com.example.watcher"
     compileSdk = 35
@@ -27,8 +34,10 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        val apiKey = localProperties.getProperty("API_KEY", "")
-        buildConfigField("String", "API_KEY", "\"$apiKey\"")
+        buildConfigField("String", "API_KEY", buildConfigString(""))
+        buildConfigField("String", "SPEECH_APP_ID", buildConfigString(""))
+        buildConfigField("String", "SPEECH_ACCESS_KEY_ID", buildConfigString(""))
+        buildConfigField("String", "SPEECH_ACCESS_KEY_SECRET", buildConfigString(""))
     }
 
     signingConfigs {
@@ -56,9 +65,24 @@ android {
     }
 
     buildTypes {
+        debug {
+            val apiKey = localProperties.getProperty("API_KEY", "")
+            val speechAppId = localProperties.getProperty("SPEECH_APP_ID", "")
+            val speechAccessKeyId = localProperties.getProperty("SPEECH_ACCESS_KEY_ID", "")
+            val speechAccessKeySecret = localProperties.getProperty("SPEECH_ACCESS_KEY_SECRET", "")
+
+            buildConfigField("String", "API_KEY", buildConfigString(apiKey))
+            buildConfigField("String", "SPEECH_APP_ID", buildConfigString(speechAppId))
+            buildConfigField("String", "SPEECH_ACCESS_KEY_ID", buildConfigString(speechAccessKeyId))
+            buildConfigField("String", "SPEECH_ACCESS_KEY_SECRET", buildConfigString(speechAccessKeySecret))
+        }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            buildConfigField("String", "API_KEY", buildConfigString(""))
+            buildConfigField("String", "SPEECH_APP_ID", buildConfigString(""))
+            buildConfigField("String", "SPEECH_ACCESS_KEY_ID", buildConfigString(""))
+            buildConfigField("String", "SPEECH_ACCESS_KEY_SECRET", buildConfigString(""))
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

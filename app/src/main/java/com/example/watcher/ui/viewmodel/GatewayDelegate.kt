@@ -20,6 +20,7 @@ import com.example.watcher.data.repository.LiveCommentaryRepository
 import com.example.watcher.data.repository.LiveSpeechRecognitionManager
 import com.example.watcher.data.repository.MonitorManager
 import com.example.watcher.data.repository.VideoProcessRepository
+import com.example.watcher.data.repository.AppRuntimeSecretStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -53,6 +54,7 @@ internal class GatewayDelegate(
     private val announcer = GatewayServiceAnnouncer(appContext)
     private var server: GatewayServer? = null
     private val prefs = appContext.getSharedPreferences("gateway_prefs", Context.MODE_PRIVATE)
+    private val secretStore = AppRuntimeSecretStore(appContext)
 
     // Stream ownership: phone ↔ remote handoff protocol
     enum class StreamOwner { Phone, Remote }
@@ -61,7 +63,7 @@ internal class GatewayDelegate(
 
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
-    val apiKey: String get() = prefs.getString("api_key", null) ?: generateApiKey()
+    val apiKey: String get() = readOrCreateApiKey()
     val port: Int get() = prefs.getInt("port", GatewayServer.DEFAULT_PORT)
 
     fun toggle(enabled: Boolean) {
@@ -199,9 +201,32 @@ internal class GatewayDelegate(
         _running.value = false
     }
 
+    private fun readOrCreateApiKey(): String {
+        val storedSecret = secretStore.getGatewayApiKey().trim()
+        if (storedSecret.isNotBlank()) {
+            migrateLegacyGatewayApiKeyIfNeeded()
+            return storedSecret
+        }
+
+        val legacySecret = prefs.getString("api_key", null)?.trim().orEmpty()
+        if (legacySecret.isNotBlank()) {
+            secretStore.putGatewayApiKey(legacySecret)
+            prefs.edit().remove("api_key").apply()
+            return legacySecret
+        }
+
+        return generateApiKey()
+    }
+
+    private fun migrateLegacyGatewayApiKeyIfNeeded() {
+        if (prefs.contains("api_key")) {
+            prefs.edit().remove("api_key").apply()
+        }
+    }
+
     private fun generateApiKey(): String {
         val key = UUID.randomUUID().toString().replace("-", "").take(24)
-        prefs.edit().putString("api_key", key).apply()
+        secretStore.putGatewayApiKey(key)
         return key
     }
 

@@ -2,6 +2,7 @@ package com.example.watcher.data.remote
 
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
+import com.example.watcher.data.repository.requireSecureEndpoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -23,6 +24,10 @@ class OpenAiCompatibleProvider(
         .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
+
+    init {
+        requireSecureEndpoint(endpoint, "Provider endpoint")
+    }
 
     private val gson = Gson()
 

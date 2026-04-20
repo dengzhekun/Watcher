@@ -10,6 +10,7 @@ import com.example.watcher.data.repository.ArkConfig
 import com.example.watcher.data.repository.LlmWalletRepository
 import com.example.watcher.data.repository.ProviderConnectivitySnapshot
 import com.example.watcher.data.repository.ProviderConnectivityStatus
+import com.example.watcher.data.repository.validateSecureEndpoint
 import com.example.watcher.watcherApplication
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -97,6 +98,10 @@ class ApiWalletViewModel(application: Application) : AndroidViewModel(applicatio
         val draft = current.draft
         if (draft.name.isBlank() || draft.endpoint.isBlank() || draft.modelName.isBlank()) {
             _uiState.value = current.copy(errorMessage = "Name, endpoint and model are required.")
+            return
+        }
+        validateSecureEndpoint(draft.endpoint, "Provider endpoint")?.let { error ->
+            _uiState.value = current.copy(errorMessage = error)
             return
         }
 

@@ -9,6 +9,8 @@
     <exclude domain="database" path="watcher_database" />
     <exclude domain="database" path="watcher_database-wal" />
     <exclude domain="database" path="watcher_database-shm" />
+    <exclude domain="sharedpref" path="gateway_prefs.xml" />
+    <exclude domain="sharedpref" path="app_runtime_secrets.xml" />
     <exclude domain="sharedpref" path="llm_wallet_prefs.xml" />
     <exclude domain="sharedpref" path="llm_wallet_secrets.xml" />
     <exclude domain="file" path="agentframework/" />

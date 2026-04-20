@@ -9,6 +9,7 @@ import android.media.MediaRecorder
 import android.util.Base64
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.example.watcher.BuildConfig
 import com.example.watcher.data.model.LiveSpeechState
 import com.example.watcher.data.model.SpeechTranscriptEntry
 import kotlinx.coroutines.CoroutineScope
@@ -48,11 +49,6 @@ class LiveSpeechRecognitionManager(
         private const val SAMPLE_RATE = 16000
         private const val WS_BASE = "wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1"
 
-        // iFlytek credentials
-        private const val APP_ID = "1a62b808"
-        private const val ACCESS_KEY_ID = "dad59fee22d468c1261fe0ee11cce64d"
-        private const val ACCESS_KEY_SECRET = "NjU3YThhMGNkNDdhYzUyZmE0NThhODlj"
-
         // Audio: send 1280 bytes every 40ms (as per doc)
         private const val CHUNK_BYTES = 1280
         private const val SEND_INTERVAL_MS = 40L
@@ -62,6 +58,7 @@ class LiveSpeechRecognitionManager(
     val state: StateFlow<LiveSpeechState> = _state.asStateFlow()
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val secretStore = AppRuntimeSecretStore(context)
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
     private val idCounter = AtomicLong(0)
 
@@ -79,6 +76,14 @@ class LiveSpeechRecognitionManager(
 
     fun start() {
         if (isRecording) return
+        val credentials = resolveSpeechCredentials()
+        if (!credentials.isConfigured()) {
+            _state.value = LiveSpeechState(
+                isActive = true,
+                errorMessage = "未配置语音识别凭据。请在 local.properties 的 debug 配置中提供 SPEECH_APP_ID、SPEECH_ACCESS_KEY_ID、SPEECH_ACCESS_KEY_SECRET。"
+            )
+            return
+        }
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -98,7 +103,7 @@ class LiveSpeechRecognitionManager(
         _state.value = LiveSpeechState(isActive = true, isMicEnabled = true)
         audioRecord!!.startRecording()
         Thread { sendAudioLoop() }.start()
-        connectWebSocket()
+        connectWebSocket(credentials)
     }
 
     fun stop() {
@@ -135,8 +140,8 @@ class LiveSpeechRecognitionManager(
 
     // ---- WebSocket connection ----
 
-    private fun connectWebSocket() {
-        val url = buildWsUrl()
+    private fun connectWebSocket(credentials: SpeechCredentials) {
+        val url = buildWsUrl(credentials)
         Log.d(TAG, "Connecting WebSocket...")
 
         val request = Request.Builder().url(url).build()
@@ -160,7 +165,7 @@ class LiveSpeechRecognitionManager(
                 // Auto-reconnect after 2s
                 if (isRecording) {
                     Thread.sleep(2000)
-                    if (isRecording) connectWebSocket()
+                    if (isRecording) connectWebSocket(credentials)
                 }
             }
 
@@ -170,7 +175,7 @@ class LiveSpeechRecognitionManager(
                 // Reconnect if still recording
                 if (isRecording) {
                     Thread.sleep(1000)
-                    if (isRecording) connectWebSocket()
+                    if (isRecording) connectWebSocket(credentials)
                 }
             }
         })
@@ -305,15 +310,25 @@ class LiveSpeechRecognitionManager(
 
     // ---- URL & Signature ----
 
-    private fun buildWsUrl(): String {
+    private fun resolveSpeechCredentials(): SpeechCredentials {
+        return secretStore.readSpeechCredentials(
+            fallback = SpeechCredentials(
+                appId = BuildConfig.SPEECH_APP_ID,
+                accessKeyId = BuildConfig.SPEECH_ACCESS_KEY_ID,
+                accessKeySecret = BuildConfig.SPEECH_ACCESS_KEY_SECRET
+            )
+        )
+    }
+
+    private fun buildWsUrl(credentials: SpeechCredentials): String {
         val utcFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US)
         utcFormat.timeZone = TimeZone.getTimeZone("Asia/Shanghai")
         val utc = utcFormat.format(Date())
         val uuid = UUID.randomUUID().toString()
 
         val params = sortedMapOf(
-            "accessKeyId" to ACCESS_KEY_ID,
-            "appId" to APP_ID,
+            "accessKeyId" to credentials.accessKeyId,
+            "appId" to credentials.appId,
             "audio_encode" to "pcm_s16le",
             "lang" to "autodialect",
             "samplerate" to SAMPLE_RATE.toString(),
@@ -329,7 +344,7 @@ class LiveSpeechRecognitionManager(
 
         // HmacSHA1 signature
         val mac = Mac.getInstance("HmacSHA1")
-        mac.init(SecretKeySpec(ACCESS_KEY_SECRET.toByteArray(), "HmacSHA1"))
+        mac.init(SecretKeySpec(credentials.accessKeySecret.toByteArray(), "HmacSHA1"))
         val signBytes = mac.doFinal(baseString.toByteArray())
         val signature = Base64.encodeToString(signBytes, Base64.NO_WRAP)
 

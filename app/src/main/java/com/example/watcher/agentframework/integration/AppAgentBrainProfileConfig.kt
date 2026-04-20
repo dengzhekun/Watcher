@@ -1,6 +1,7 @@
 package com.example.watcher.agentframework.integration
 
 import com.example.watcher.agentframework.service.RegisteredAgentProfile
+import com.example.watcher.data.repository.requireSecureEndpoint
 
 private const val META_BRAIN_ENDPOINT = "brain.endpoint"
 private const val META_BRAIN_API_KEY = "brain.apiKey"
@@ -23,6 +24,7 @@ data class AppAgentBrainProfileConfig(
         if (providerId.isNotBlank()) return
         if (!hasCustomConnection()) return
         require(endpoint.isNotBlank()) { "Brain endpoint is required when using a custom brain." }
+        requireSecureEndpoint(endpoint, "Brain endpoint")
         require(apiKey.isNotBlank()) { "Brain API key is required when using a custom brain." }
     }
 }
