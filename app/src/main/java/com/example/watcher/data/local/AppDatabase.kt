@@ -2,7 +2,6 @@ package com.example.watcher.data.local
 
 import android.content.Context
 import androidx.room.Database
-import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
@@ -11,12 +10,9 @@ import com.example.watcher.data.model.MonitorTask
 import com.example.watcher.data.model.MonitorEventEntity
 import com.example.watcher.data.model.MonitorMediaEntity
 import com.example.watcher.data.model.MonitorRun
-import com.example.watcher.data.model.MonitorTaskTemplates
 import com.example.watcher.data.model.MonitorTemplateEntity
-import com.example.watcher.data.model.CouncilExpertDefaults
 import com.example.watcher.data.model.CouncilExpertEntity
 import com.example.watcher.data.model.CouncilKnowledgeEntity
-import com.example.watcher.data.model.CouncilTemplates
 import com.example.watcher.data.model.CouncilTemplateEntity
 import com.example.watcher.data.model.TimelineEventEntity
 import com.example.watcher.data.model.VideoProcessRun
@@ -30,15 +26,12 @@ import com.example.watcher.data.model.BlackboardEntry
 import com.example.watcher.data.model.BlackboardObservationItem
 import com.example.watcher.data.model.BehaviorClaim
 import com.example.watcher.data.model.BehaviorReasoningLog
+import com.example.watcher.data.model.CouncilExpertDefaults
 import com.example.watcher.data.model.LlmProviderEntity
 import com.example.watcher.data.model.ObservationGoal
 import com.example.watcher.data.model.PortraitDimension
 import com.example.watcher.data.model.SceneProfile
-import com.example.watcher.data.model.VideoTaskTemplates
 import com.example.watcher.data.model.VideoTemplateEntity
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 @Database(
     entities = [
@@ -972,95 +965,24 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): AppDatabase {
             return instance ?: synchronized(this) {
-                instance ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "watcher_database"
-                ).addMigrations(
-                    MIGRATION_11_12,
-                    MIGRATION_12_13,
-                    MIGRATION_13_14,
-                    MIGRATION_14_15,
-                    MIGRATION_15_16,
-                    MIGRATION_16_17,
-                    MIGRATION_17_18,
-                    MIGRATION_18_19,
-                    MIGRATION_19_20,
-                    MIGRATION_20_21,
-                    MIGRATION_21_22,
-                    MIGRATION_22_23,
-                    MIGRATION_23_24,
-                    MIGRATION_24_25,
-                    MIGRATION_25_26,
-                    MIGRATION_26_27,
-                    MIGRATION_27_28,
-                    MIGRATION_28_29,
-                    MIGRATION_29_30,
-                    MIGRATION_30_31,
-                    MIGRATION_31_32,
-                    MIGRATION_32_33,
-                    MIGRATION_33_34,
-                    MIGRATION_34_35,
-                    MIGRATION_35_36,
-                    MIGRATION_36_37,
-                    MIGRATION_37_38,
-                    MIGRATION_38_39,
-                    MIGRATION_39_40,
-                    MIGRATION_40_41,
-                    MIGRATION_41_42,
-                    MIGRATION_42_43,
-                    MIGRATION_43_44
-                )
-                    .addCallback(object : Callback() {
-                        override fun onOpen(db: SupportSQLiteDatabase) {
-                            super.onOpen(db)
-                            instance?.let { database ->
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    seedDefaultTemplates(database.templateDao())
-                                    seedDefaultCouncilExperts(database.councilExpertDao())
-                                    seedDefaultPortraitDimensions(database.portraitDao())
-                                }
-                            }
-                        }
-                    })
-                    .fallbackToDestructiveMigration()
-                    .build()
-                    .also { instance = it }
+                instance ?: buildWatcherDatabase(
+                    context = context.applicationContext,
+                    migrations = allMigrations(),
+                    databaseProvider = { instance }
+                ).also { instance = it }
             }
         }
 
-        private suspend fun seedDefaultTemplates(dao: TemplateDao) {
-            for (entity in MonitorTaskTemplates.defaultEntities()) {
-                if (dao.getMonitorTemplate(entity.templateId) == null) {
-                    dao.upsertMonitor(entity)
-                }
-            }
-            for (entity in VideoTaskTemplates.defaultEntities()) {
-                if (dao.getVideoTemplate(entity.templateId) == null) {
-                    dao.upsertVideo(entity)
-                }
-            }
-            for (entity in CouncilTemplates.defaultEntities()) {
-                if (dao.getCouncilTemplate(entity.templateId) == null) {
-                    dao.upsertCouncil(entity)
-                }
-            }
-        }
-
-        private suspend fun seedDefaultCouncilExperts(dao: CouncilExpertDao) {
-            // Seed missing system presets; existing ones are left untouched
-            val existingIds = dao.getAll().mapTo(linkedSetOf()) { it.expertId }
-            for (entity in CouncilExpertDefaults.defaultEntities()) {
-                if (entity.expertId !in existingIds) {
-                    dao.upsert(entity)
-                }
-            }
-        }
-
-        private suspend fun seedDefaultPortraitDimensions(dao: PortraitDao) {
-            if (dao.count() == 0) {
-                PortraitDimension.defaults().forEach { dao.upsert(it) }
-            }
-        }
+        private fun allMigrations(): Array<Migration> = arrayOf(
+            MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
+            MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
+            MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23,
+            MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27,
+            MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31,
+            MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35,
+            MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39,
+            MIGRATION_39_40, MIGRATION_40_41, MIGRATION_41_42, MIGRATION_42_43,
+            MIGRATION_43_44
+        )
     }
 }

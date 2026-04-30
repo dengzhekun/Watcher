@@ -1,11 +1,14 @@
 package com.example.watcher.ui.components
 
 import android.Manifest
+import android.app.Activity
+import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.util.Log
 import android.util.Size
+import android.view.Surface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -20,6 +23,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
@@ -43,9 +47,11 @@ internal fun rememberFrontCameraFallbackState(
     onFrameUpdate: (Bitmap?) -> Unit = {}
 ): FrontCameraFallbackState {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val mainExecutor = remember(context) { ContextCompat.getMainExecutor(context) }
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    val targetRotation = resolveTargetRotation(context)
 
     var currentFrame by remember { mutableStateOf<Bitmap?>(null) }
     var connectionStatus by remember { mutableStateOf<ConnectionStatus>(ConnectionStatus.Disconnected) }
@@ -95,7 +101,14 @@ internal fun rememberFrontCameraFallbackState(
         }
     }
 
-    DisposableEffect(active, hasPermission, reconnectToken, lifecycleOwner) {
+    DisposableEffect(
+        active,
+        hasPermission,
+        reconnectToken,
+        lifecycleOwner,
+        configuration.orientation,
+        targetRotation
+    ) {
         if (!active) {
             onDispose { }
         } else if (!hasPermission) {
@@ -110,7 +123,10 @@ internal fun rememberFrontCameraFallbackState(
             val bindRunnable = Runnable {
                 runCatching {
                     val provider = providerFuture.get()
-                    val analysis = buildImageAnalysis(cameraExecutor) { image ->
+                    val analysis = buildImageAnalysis(
+                        executor = cameraExecutor,
+                        targetRotation = targetRotation
+                    ) { image ->
                         val frame = image.toBitmap()
                         image.close()
 
@@ -169,16 +185,27 @@ internal fun rememberFrontCameraFallbackState(
 
 private fun buildImageAnalysis(
     executor: ExecutorService,
+    targetRotation: Int,
     onFrame: (ImageProxy) -> Unit
 ): ImageAnalysis {
     return ImageAnalysis.Builder()
         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
         .setTargetResolution(Size(640, 480))
+        .setTargetRotation(targetRotation)
+        .setOutputImageRotationEnabled(true)
         .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
         .build()
         .apply {
             setAnalyzer(executor, onFrame)
         }
+}
+
+private fun resolveTargetRotation(context: Context): Int {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        return context.display?.rotation ?: Surface.ROTATION_0
+    }
+    @Suppress("DEPRECATION")
+    return (context as? Activity)?.windowManager?.defaultDisplay?.rotation ?: Surface.ROTATION_0
 }
 
 private fun ImageProxy.toBitmap(): Bitmap {
@@ -210,11 +237,5 @@ private fun ImageProxy.toBitmap(): Bitmap {
 
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
-    val rotation = imageInfo.rotationDegrees
-    if (rotation == 0) {
-        return bitmap
-    }
-
-    val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
-    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    return bitmap
 }

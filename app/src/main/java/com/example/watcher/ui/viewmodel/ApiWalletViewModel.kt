@@ -6,11 +6,18 @@ import androidx.lifecycle.viewModelScope
 import com.example.watcher.data.model.LlmProviderEntity
 import com.example.watcher.data.remote.ChatMessage
 import com.example.watcher.data.remote.OpenAiCompatibleProvider
+import com.example.watcher.data.repository.AsrConfigRepository
+import com.example.watcher.data.repository.AsrConfigSource
+import com.example.watcher.data.repository.AsrConnectivitySnapshot
+import com.example.watcher.data.repository.AsrConnectivityStatus
 import com.example.watcher.data.repository.ArkConfig
+import com.example.watcher.data.repository.DEFAULT_DOUBAO_STREAMING_ASR_RESOURCE_ID
 import com.example.watcher.data.repository.LlmWalletRepository
 import com.example.watcher.data.repository.ProviderConnectivitySnapshot
 import com.example.watcher.data.repository.ProviderConnectivityStatus
+import com.example.watcher.data.repository.VolcengineAsrCredentials
 import com.example.watcher.data.repository.validateSecureEndpoint
+import com.example.watcher.BuildConfig
 import com.example.watcher.watcherApplication
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +34,31 @@ data class ApiWalletDraft(
     val enabled: Boolean = true
 )
 
+data class AsrConfigDraft(
+    val appKey: String = "",
+    val accessKey: String = "",
+    val resourceId: String = DEFAULT_DOUBAO_STREAMING_ASR_RESOURCE_ID
+) {
+    internal fun toCredentials(): VolcengineAsrCredentials {
+        return VolcengineAsrCredentials(
+            appKey = appKey.trim(),
+            accessKey = accessKey.trim(),
+            resourceId = resourceId.trim().ifBlank { DEFAULT_DOUBAO_STREAMING_ASR_RESOURCE_ID }
+        )
+    }
+}
+
+data class AsrConfigUiState(
+    val draft: AsrConfigDraft = AsrConfigDraft(),
+    val source: AsrConfigSource = AsrConfigSource.Missing,
+    val connectivity: AsrConnectivitySnapshot = AsrConnectivitySnapshot(),
+    val isSaving: Boolean = false,
+    val isTesting: Boolean = false
+) {
+    val isConfigured: Boolean
+        get() = draft.toCredentials().isConfigured()
+}
+
 data class ApiWalletUiState(
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
@@ -36,6 +68,7 @@ data class ApiWalletUiState(
     val defaultProviderId: String? = null,
     val isEditing: Boolean = false,
     val draft: ApiWalletDraft = ApiWalletDraft(),
+    val asrConfig: AsrConfigUiState = AsrConfigUiState(),
     val statusMessage: String? = null,
     val errorMessage: String? = null,
     val arkFallbackAvailable: Boolean = false
@@ -47,6 +80,7 @@ data class ApiWalletUiState(
 class ApiWalletViewModel(application: Application) : AndroidViewModel(application) {
     private val walletRepository: LlmWalletRepository =
         application.watcherApplication().agentFrameworkContainer.llmWalletRepository
+    private val asrConfigRepository = AsrConfigRepository(application)
 
     private val _uiState = MutableStateFlow(
         ApiWalletUiState(arkFallbackAvailable = ArkConfig.apiKey.isNotBlank())
@@ -55,6 +89,7 @@ class ApiWalletViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         observeProviders()
+        syncAsrConfig()
     }
 
     fun startCreate() {
@@ -88,6 +123,16 @@ class ApiWalletViewModel(application: Application) : AndroidViewModel(applicatio
     fun updateDraft(transform: (ApiWalletDraft) -> ApiWalletDraft) {
         _uiState.value = _uiState.value.copy(
             draft = transform(_uiState.value.draft),
+            statusMessage = null,
+            errorMessage = null
+        )
+    }
+
+    fun updateAsrDraft(transform: (AsrConfigDraft) -> AsrConfigDraft) {
+        _uiState.value = _uiState.value.copy(
+            asrConfig = _uiState.value.asrConfig.copy(
+                draft = transform(_uiState.value.asrConfig.draft)
+            ),
             statusMessage = null,
             errorMessage = null
         )
@@ -287,6 +332,116 @@ class ApiWalletViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.value = _uiState.value.copy(statusMessage = null, errorMessage = null)
     }
 
+    fun saveAsrDraft() {
+        val current = _uiState.value
+        val credentials = current.asrConfig.draft.toCredentials()
+        if (!credentials.isConfigured()) {
+            _uiState.value = current.copy(errorMessage = "请填写完整的 App Key、Access Key 和 Resource ID。")
+            return
+        }
+
+        _uiState.value = current.copy(
+            asrConfig = current.asrConfig.copy(isSaving = true),
+            statusMessage = null,
+            errorMessage = null
+        )
+        viewModelScope.launch {
+            runCatching {
+                val resolved = resolveBuildConfigFallback()
+                val previous = asrConfigRepository.resolveConfig(resolved).credentials
+                asrConfigRepository.saveCredentials(credentials)
+                if (previous != credentials) {
+                    asrConfigRepository.clearConnectivitySnapshot()
+                }
+            }.onSuccess {
+                syncAsrConfig(statusMessage = "直播语音识别配置已保存。")
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    asrConfig = _uiState.value.asrConfig.copy(isSaving = false),
+                    errorMessage = error.message ?: "保存语音识别配置失败。"
+                )
+            }
+        }
+    }
+
+    fun clearAsrConfig() {
+        val current = _uiState.value
+        _uiState.value = current.copy(
+            asrConfig = current.asrConfig.copy(isSaving = true),
+            statusMessage = null,
+            errorMessage = null
+        )
+        viewModelScope.launch {
+            runCatching {
+                asrConfigRepository.clearCredentials()
+                asrConfigRepository.clearConnectivitySnapshot()
+            }.onSuccess {
+                syncAsrConfig(statusMessage = "直播语音识别配置已清空。")
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    asrConfig = _uiState.value.asrConfig.copy(isSaving = false),
+                    errorMessage = error.message ?: "清空语音识别配置失败。"
+                )
+            }
+        }
+    }
+
+    fun testAsrConfig() {
+        val current = _uiState.value
+        val credentials = current.asrConfig.draft.toCredentials()
+        if (!credentials.isConfigured()) {
+            _uiState.value = current.copy(errorMessage = "请先填写完整的 App Key、Access Key 和 Resource ID。")
+            return
+        }
+
+        _uiState.value = current.copy(
+            asrConfig = current.asrConfig.copy(isTesting = true),
+            statusMessage = null,
+            errorMessage = null
+        )
+        viewModelScope.launch {
+            runCatching {
+                asrConfigRepository.testCredentials(credentials)
+            }.onSuccess { message ->
+                val snapshot = AsrConnectivitySnapshot(
+                    status = AsrConnectivityStatus.Verified,
+                    lastTestedAt = System.currentTimeMillis(),
+                    message = message
+                )
+                asrConfigRepository.setConnectivitySnapshot(
+                    status = snapshot.status,
+                    message = snapshot.message,
+                    testedAt = snapshot.lastTestedAt ?: System.currentTimeMillis()
+                )
+                _uiState.value = _uiState.value.copy(
+                    asrConfig = _uiState.value.asrConfig.copy(
+                        isTesting = false,
+                        connectivity = snapshot
+                    ),
+                    statusMessage = "语音识别初始化验证成功。"
+                )
+            }.onFailure { error ->
+                val snapshot = AsrConnectivitySnapshot(
+                    status = AsrConnectivityStatus.Failed,
+                    lastTestedAt = System.currentTimeMillis(),
+                    message = error.message ?: "连接失败。"
+                )
+                asrConfigRepository.setConnectivitySnapshot(
+                    status = snapshot.status,
+                    message = snapshot.message,
+                    testedAt = snapshot.lastTestedAt ?: System.currentTimeMillis()
+                )
+                _uiState.value = _uiState.value.copy(
+                    asrConfig = _uiState.value.asrConfig.copy(
+                        isTesting = false,
+                        connectivity = snapshot
+                    ),
+                    errorMessage = error.message ?: "语音识别连接测试失败。"
+                )
+            }
+        }
+    }
+
     private fun observeProviders() {
         viewModelScope.launch {
             walletRepository.observeProviders().collect { providers ->
@@ -305,6 +460,32 @@ class ApiWalletViewModel(application: Application) : AndroidViewModel(applicatio
                 )
             }
         }
+    }
+
+    private fun syncAsrConfig(
+        statusMessage: String? = null,
+        errorMessage: String? = null
+    ) {
+        val resolved = asrConfigRepository.resolveConfig(resolveBuildConfigFallback())
+        _uiState.value = _uiState.value.copy(
+            asrConfig = _uiState.value.asrConfig.copy(
+                draft = resolved.credentials.toDraft(),
+                source = resolved.source,
+                connectivity = resolved.connectivity,
+                isSaving = false,
+                isTesting = false
+            ),
+            statusMessage = statusMessage,
+            errorMessage = errorMessage
+        )
+    }
+
+    private fun resolveBuildConfigFallback(): VolcengineAsrCredentials {
+        return VolcengineAsrCredentials(
+            appKey = BuildConfig.VOLCENGINE_ASR_APP_KEY,
+            accessKey = BuildConfig.VOLCENGINE_ASR_ACCESS_KEY,
+            resourceId = BuildConfig.VOLCENGINE_ASR_RESOURCE_ID
+        )
     }
 
     private fun resolveEffectiveDefaultId(
@@ -338,5 +519,13 @@ private fun LlmProviderEntity.toDraft(): ApiWalletDraft {
         apiKey = apiKey,
         modelName = modelName,
         enabled = enabled
+    )
+}
+
+private fun VolcengineAsrCredentials.toDraft(): AsrConfigDraft {
+    return AsrConfigDraft(
+        appKey = appKey,
+        accessKey = accessKey,
+        resourceId = resourceId.ifBlank { DEFAULT_DOUBAO_STREAMING_ASR_RESOURCE_ID }
     )
 }

@@ -16,8 +16,8 @@ import com.example.watcher.data.model.VideoProcessTaskDraft
 import com.example.watcher.data.model.VideoRunStatus
 import com.example.watcher.data.repository.HistoryRepository
 import com.example.watcher.data.repository.IntentRepository
+import com.example.watcher.data.repository.LiveSpeechRecognizer
 import com.example.watcher.data.repository.LiveCommentaryRepository
-import com.example.watcher.data.repository.LiveSpeechRecognitionManager
 import com.example.watcher.data.repository.MonitorManager
 import com.example.watcher.data.repository.VideoProcessRepository
 import com.example.watcher.data.repository.AppRuntimeSecretStore
@@ -45,7 +45,7 @@ internal class GatewayDelegate(
     private val videoRepository: VideoProcessRepository,
     private val agentService: AgentFrameworkService,
     private val liveCommentaryRepository: LiveCommentaryRepository,
-    private val liveSpeechManager: LiveSpeechRecognitionManager,
+    private val liveSpeechManager: LiveSpeechRecognizer,
     private val streamUrlProvider: () -> String?,
     private val onStreamRelease: () -> Unit,
     private val onStreamReclaim: () -> Unit

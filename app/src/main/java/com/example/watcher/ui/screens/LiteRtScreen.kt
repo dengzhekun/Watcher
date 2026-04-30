@@ -81,6 +81,7 @@ fun LiteRtScreen(
     isModelDownloaded: Boolean,
     onLoadEngine: (LiteRtModelConfig) -> Unit,
     onUnloadEngine: () -> Unit,
+    onScanForModel: () -> Unit,
     onSendMessage: (String) -> Unit,
     onAttachImage: (Uri) -> Unit,
     onClearAttachment: () -> Unit,
@@ -145,6 +146,7 @@ fun LiteRtScreen(
                         downloadProgress = downloadProgress,
                         isModelDownloaded = isModelDownloaded,
                         onDownload = onDownloadModel,
+                        onScanForModel = onScanForModel,
                         onOpenConfig = { showConfigDialog = true }
                     )
                 }
@@ -236,6 +238,7 @@ private fun ModelSetupPrompt(
     downloadProgress: DownloadProgress,
     isModelDownloaded: Boolean,
     onDownload: () -> Unit,
+    onScanForModel: () -> Unit,
     onOpenConfig: () -> Unit
 ) {
     Column(
@@ -282,13 +285,22 @@ private fun ModelSetupPrompt(
             else -> {
                 if (isModelDownloaded) {
                     Text(
-                        text = "模型已下载，点击配置加载",
+                        text = "已检测到本地模型",
                         style = MaterialTheme.typography.titleMedium
                     )
-                    Button(onClick = onOpenConfig) { Text("打开配置") }
+                    Text(
+                        text = "升级后会优先扫描已有模型；如果路径没恢复，可以手动重新扫描。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = onScanForModel) { Text("扫描已有模型") }
+                        OutlinedButton(onClick = onOpenConfig) { Text("打开配置") }
+                    }
                 } else {
                     Text(
-                        text = "需要下载本地模型",
+                        text = "未检测到可用模型",
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
@@ -297,6 +309,7 @@ private fun ModelSetupPrompt(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
+                    OutlinedButton(onClick = onScanForModel) { Text("扫描已有模型") }
                     Button(onClick = onDownload) { Text("下载模型") }
                     TextButton(onClick = onOpenConfig) { Text("手动配置路径") }
                 }
@@ -459,14 +472,15 @@ private fun ModelConfigDialog(
     onUnloadEngine: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var modelPath by rememberSaveable { mutableStateOf(savedConfig?.modelPath ?: "") }
-    var displayName by rememberSaveable { mutableStateOf(savedConfig?.displayName ?: "") }
-    var backend by remember { mutableStateOf(savedConfig?.backend ?: LiteRtBackendType.GPU) }
-    var visionBackend by remember { mutableStateOf(savedConfig?.visionBackend) }
-    var audioBackend by remember { mutableStateOf(savedConfig?.audioBackend) }
-    var temperature by remember { mutableFloatStateOf(savedConfig?.temperature ?: 0.7f) }
-    var topK by remember { mutableIntStateOf(savedConfig?.topK ?: 40) }
-    var topP by remember { mutableFloatStateOf(savedConfig?.topP ?: 0.95f) }
+    val initialConfig = savedConfig ?: engineStatus.modelConfig
+    var modelPath by rememberSaveable { mutableStateOf(initialConfig?.modelPath ?: "") }
+    var displayName by rememberSaveable { mutableStateOf(initialConfig?.displayName ?: "") }
+    var backend by remember { mutableStateOf(initialConfig?.backend ?: LiteRtBackendType.GPU) }
+    var visionBackend by remember { mutableStateOf(initialConfig?.visionBackend) }
+    var audioBackend by remember { mutableStateOf(initialConfig?.audioBackend) }
+    var temperature by remember { mutableFloatStateOf(initialConfig?.temperature ?: 0.7f) }
+    var topK by remember { mutableIntStateOf(initialConfig?.topK ?: 40) }
+    var topP by remember { mutableFloatStateOf(initialConfig?.topP ?: 0.95f) }
 
     val isLoading = engineStatus.state == LiteRtEngineState.Initializing
     val isReady = engineStatus.state == LiteRtEngineState.Ready

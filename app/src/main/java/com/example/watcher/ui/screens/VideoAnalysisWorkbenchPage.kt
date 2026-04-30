@@ -155,8 +155,7 @@ internal fun VideoAnalysisWorkbenchPage(
                 onReconnect = onReconnectStream,
                 onCaptureSnapshot = onCaptureSnapshot,
                 onOpenSettings = onOpenSettings,
-                compact = true,
-                showAiBadge = true
+                compact = true
             )
         }
 

@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /**
  * Discovers the .litertlm model from known locations:
@@ -14,22 +13,22 @@ import java.io.File
  */
 class LiteRtAssetInstaller(private val context: Context) {
 
-    private val modelsDir = File(context.filesDir, "litert_models").apply { mkdirs() }
+    private val modelLocator = LiteRtModelLocator(context)
 
     /**
      * Finds the model from all known locations, or installs from assets if available.
      */
     suspend fun installBundledModelIfNeeded(): String? = withContext(Dispatchers.IO) {
         // 1. Check internal storage
-        val internalFile = File(modelsDir, BUNDLED_MODEL_NAME)
-        if (internalFile.exists() && internalFile.length() > 0) {
+        val internalFile = modelLocator.internalModelFile()
+        if (modelLocator.isUsableModelFile(internalFile)) {
             Log.i(TAG, "Model found in internal storage: ${internalFile.absolutePath}")
             return@withContext internalFile.absolutePath
         }
 
         // 2. Check /data/local/tmp/ (ADB push location)
-        val adbFile = File("/data/local/tmp/$BUNDLED_MODEL_NAME")
-        if (adbFile.exists() && adbFile.length() > 0) {
+        val adbFile = modelLocator.adbModelFile()
+        if (modelLocator.isUsableModelFile(adbFile)) {
             Log.i(TAG, "Model found at ADB location: ${adbFile.absolutePath}")
             return@withContext adbFile.absolutePath
         }
@@ -46,8 +45,12 @@ class LiteRtAssetInstaller(private val context: Context) {
                         input.copyTo(output, bufferSize = 1024 * 1024)
                     }
                 }
-                Log.i(TAG, "Model installed: ${internalFile.absolutePath}")
-                return@withContext internalFile.absolutePath
+                if (modelLocator.isUsableModelFile(internalFile)) {
+                    Log.i(TAG, "Model installed: ${internalFile.absolutePath}")
+                    return@withContext internalFile.absolutePath
+                }
+                Log.w(TAG, "Bundled model copy finished but file validation failed")
+                internalFile.delete()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to install bundled model", e)
                 internalFile.delete()
@@ -61,6 +64,6 @@ class LiteRtAssetInstaller(private val context: Context) {
     companion object {
         private const val TAG = "LiteRtAssetInstaller"
         private const val ASSET_MODEL_DIR = "litert_models"
-        const val BUNDLED_MODEL_NAME = "gemma-4-E2B-it.litertlm"
+        const val BUNDLED_MODEL_NAME = LiteRtModelFiles.MODEL_FILENAME
     }
 }

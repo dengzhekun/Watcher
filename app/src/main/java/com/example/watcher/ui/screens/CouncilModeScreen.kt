@@ -69,8 +69,6 @@ import com.example.watcher.data.model.CouncilExpertRole
 import com.example.watcher.data.model.CouncilUiState
 import com.example.watcher.data.model.CouncilVoteLevel
 import com.example.watcher.data.model.CouncilExpertStage
-import com.example.watcher.data.model.CommentaryEntry
-import com.example.watcher.data.model.CommentaryEntryStatus
 import com.example.watcher.data.model.LiveCommentaryState
 import com.example.watcher.data.model.LiveSpeechState
 import com.example.watcher.data.model.VideoStreamSettings
@@ -78,6 +76,35 @@ import com.example.watcher.ui.components.ConnectionStatus
 import com.example.watcher.ui.components.MjpegStreamUiState
 import com.example.watcher.ui.components.StreamSource
 import kotlinx.coroutines.delay
+
+private val councilCommentaryTextScheme = CommentaryTextScheme(
+    recording = "Recording...",
+    uploading = "Uploading...",
+    processing = "Processing...",
+    analyzing = "Analyzing...",
+    streamingPlaceholder = "...",
+    skippedFallback = "Skipped",
+    failedFallback = "Failed"
+)
+
+private val councilMemoryLabelScheme = MemoryLabelScheme(
+    builderTag = "Builder",
+    sceneLabel = "Scene",
+    entitiesLabel = "Entities",
+    actionLabel = "Action",
+    asksLabel = "ASK",
+    askPrefix = "> ",
+    expertRequestsLabel = "专家需求",
+    expertRequestPrefix = "> ",
+    memoryALabel = "Memory A",
+    memoryBLabel = "Memory B"
+)
+
+private val councilTranscriptTextScheme = TranscriptTextScheme(
+    listeningText = "Listening...",
+    waitingText = "Waiting for speech",
+    showMicIcon = false
+)
 
 @Composable
 internal fun CouncilModeScreen(
@@ -211,12 +238,13 @@ internal fun CouncilModeScreen(
                 .padding(end = 8.dp, top = 24.dp, bottom = 112.dp)
         )
 
-        CouncilSpeechStrip(
+        SpeechTranscriptStripPanel(
             state = speechState,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth(0.6f)
-                .padding(bottom = 76.dp)
+                .padding(bottom = 76.dp),
+            textScheme = councilTranscriptTextScheme
         )
 
         AnimatedVisibility(
@@ -733,38 +761,6 @@ private fun badgeFor(entry: CouncilExpertConsoleState): String {
 }
 
 @Composable
-private fun CouncilSpeechStrip(
-    state: LiveSpeechState,
-    modifier: Modifier = Modifier
-) {
-    if (!state.isActive) return
-
-    val recent = state.transcripts.take(3)
-    Column(
-        modifier = modifier
-            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Text(
-            text = state.errorMessage ?: if (state.isListening) "Listening..." else "Waiting for speech",
-            color = if (state.errorMessage != null) Color(0xFFEF5350) else Color.White.copy(alpha = 0.55f),
-            fontSize = 11.sp
-        )
-        recent.forEach { entry ->
-            Text(
-                text = entry.text,
-                color = Color.White.copy(alpha = if (entry.isFinal) 0.9f else 0.55f),
-                fontSize = 13.sp,
-                lineHeight = 17.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-@Composable
 private fun councilButtonColors() = IconButtonDefaults.filledTonalIconButtonColors(
     containerColor = Color.Black.copy(alpha = 0.42f),
     contentColor = Color.White
@@ -798,268 +794,23 @@ private fun LiveStyleAnalysisPanel(
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier) {
-        CouncilMemoryStatusBar(
+        MemoryStatusPanel(
             state = commentaryState,
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .fillMaxWidth()
-                .fillMaxHeight(0.45f)
+                .fillMaxHeight(0.45f),
+            labels = councilMemoryLabelScheme
         )
         if (commentaryState.entries.isNotEmpty()) {
-            CouncilCommentaryFeed(
+            CommentaryFeedPanel(
                 entries = commentaryState.entries,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
-                    .fillMaxHeight(0.55f)
+                    .fillMaxHeight(0.55f),
+                textScheme = councilCommentaryTextScheme
             )
         }
-    }
-}
-
-@Composable
-private fun CouncilCommentaryFeed(
-    entries: List<CommentaryEntry>,
-    modifier: Modifier = Modifier
-) {
-    val listState = rememberLazyListState()
-
-    LaunchedEffect(entries.firstOrNull()?.segmentIndex) {
-        if (entries.isNotEmpty()) {
-            listState.animateScrollToItem(0)
-        }
-    }
-
-    LazyColumn(
-        state = listState,
-        modifier = modifier
-            .background(
-                Color.Black.copy(alpha = 0.45f),
-                RoundedCornerShape(12.dp)
-            )
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        items(
-            items = entries,
-            key = { it.segmentIndex }
-        ) { entry ->
-            CouncilCommentaryEntryCard(entry)
-        }
-    }
-}
-
-@Composable
-private fun CouncilCommentaryEntryCard(entry: CommentaryEntry) {
-    val displayText = when (entry.status) {
-        CommentaryEntryStatus.Recording -> "Recording..."
-        CommentaryEntryStatus.Uploading -> "Uploading..."
-        CommentaryEntryStatus.Processing -> "Processing..."
-        CommentaryEntryStatus.Analyzing -> "Analyzing..."
-        CommentaryEntryStatus.Streaming -> entry.streamingText.ifBlank { "..." }
-        CommentaryEntryStatus.Completed -> entry.text
-        CommentaryEntryStatus.Skipped -> entry.text.ifBlank { "Skipped" }
-        CommentaryEntryStatus.Failed -> entry.text.ifBlank { "Failed" }
-    }
-
-    val isActive = entry.status in setOf(
-        CommentaryEntryStatus.Recording,
-        CommentaryEntryStatus.Uploading,
-        CommentaryEntryStatus.Processing,
-        CommentaryEntryStatus.Analyzing,
-        CommentaryEntryStatus.Streaming
-    )
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                when (entry.status) {
-                    CommentaryEntryStatus.Failed -> Color.Red.copy(alpha = 0.15f)
-                    CommentaryEntryStatus.Skipped -> Color(0xFFFFB300).copy(alpha = 0.18f)
-                    else -> Color.Transparent
-                },
-                RoundedCornerShape(8.dp)
-            )
-            .padding(horizontal = 6.dp, vertical = 4.dp)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(
-                text = entry.displayTimestamp,
-                color = Color(0xFF4CAF50),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-            if (entry.consumerId > 0) {
-                Text(
-                    text = "#${entry.consumerId}",
-                    color = Color.White.copy(alpha = 0.4f),
-                    fontSize = 9.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-            if (isActive) {
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .background(Color(0xFFFFA726), RoundedCornerShape(999.dp))
-                )
-            }
-        }
-
-        Text(
-            text = displayText,
-            color = Color.White.copy(alpha = if (isActive) 0.7f else 0.95f),
-            fontSize = 12.sp,
-            lineHeight = 16.sp,
-            maxLines = 6,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-private fun CouncilMemoryStatusBar(
-    state: LiveCommentaryState,
-    modifier: Modifier = Modifier
-) {
-    val hasAnything = state.memoryA.isNotBlank() ||
-        state.latestMemoryB.isNotBlank() ||
-        state.sceneMemory.isNotBlank() ||
-        state.entityMemory.isNotBlank() ||
-        state.expertRequests.isNotEmpty()
-
-    if (!hasAnything) return
-
-    LazyColumn(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(bottom = 6.dp)
-            .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        if (state.scenePhase.isNotBlank()) {
-            item {
-                CouncilMemoryTag("Builder", state.scenePhase, Color(0xFF66BB6A))
-            }
-        }
-        if (state.sceneMemory.isNotBlank()) {
-            item { CouncilMemoryRow("Scene", state.sceneMemory, Color(0xFF66BB6A), 3) }
-        }
-        if (state.entityMemory.isNotBlank()) {
-            item { CouncilMemoryRow("Entities", state.entityMemory, Color(0xFF29B6F6), 4) }
-        }
-        if (state.actionSummary.isNotBlank()) {
-            item { CouncilMemoryRow("Action", state.actionSummary, Color(0xFFFFCA28), 2) }
-        }
-        if (state.pendingAsks.isNotEmpty()) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        "ASK",
-                        color = Color(0xFFEF5350),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .background(Color(0xFFEF5350).copy(alpha = 0.2f), RoundedCornerShape(3.dp))
-                            .padding(horizontal = 4.dp, vertical = 1.dp)
-                    )
-                    state.pendingAsks.forEach {
-                        Text(
-                            text = "> $it",
-                            color = Color(0xFFEF5350).copy(alpha = 0.8f),
-                            fontSize = 9.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
-        }
-        if (state.expertRequests.isNotEmpty()) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        "专家需求",
-                        color = Color(0xFFAB47BC),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .background(Color(0xFFAB47BC).copy(alpha = 0.2f), RoundedCornerShape(3.dp))
-                            .padding(horizontal = 4.dp, vertical = 1.dp)
-                    )
-                    state.expertRequests.forEach {
-                        Text(
-                            text = "> $it",
-                            color = Color(0xFFAB47BC).copy(alpha = 0.8f),
-                            fontSize = 9.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
-        }
-        if (state.memoryA.isNotBlank()) {
-            item { CouncilMemoryRow("Memory A", state.memoryA, Color(0xFF42A5F5), 3) }
-        }
-        if (state.latestMemoryB.isNotBlank()) {
-            item { CouncilMemoryRow("Memory B", state.latestMemoryB, Color(0xFFFFA726), 2) }
-        }
-    }
-}
-
-@Composable
-private fun CouncilMemoryTag(label: String, value: String, color: Color) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = label,
-            color = color,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier
-                .background(color.copy(alpha = 0.2f), RoundedCornerShape(3.dp))
-                .padding(horizontal = 4.dp, vertical = 1.dp)
-        )
-        Text(value, color = Color.White.copy(alpha = 0.5f), fontSize = 9.sp)
-    }
-}
-
-@Composable
-private fun CouncilMemoryRow(
-    label: String,
-    text: String,
-    color: Color,
-    maxLines: Int
-) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.Top
-    ) {
-        Text(
-            text = label,
-            color = color,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier
-                .background(color.copy(alpha = 0.2f), RoundedCornerShape(3.dp))
-                .padding(horizontal = 4.dp, vertical = 1.dp)
-        )
-        Text(
-            text = text,
-            color = Color.White.copy(alpha = 0.75f),
-            fontSize = 9.sp,
-            lineHeight = 12.sp,
-            maxLines = maxLines,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }

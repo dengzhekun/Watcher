@@ -1,8 +1,9 @@
-﻿package com.example.watcher.data.repository
+package com.example.watcher.data.repository
 
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.LinkAddress
+import android.net.NetworkCapabilities
 import com.example.watcher.data.model.DiscoveredStreamDevice
 import com.example.watcher.data.model.DiscoveredStreamDeviceKind
 import com.example.watcher.data.model.VideoStreamSettings
@@ -22,12 +23,15 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.InetAddress
-import java.net.URI
+import java.net.NetworkInterface
 import java.net.SocketTimeoutException
+import java.net.URI
+import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.TimeUnit
 
-class LanStreamScanner(
+internal class LanStreamScanner(
     private val appContext: Context
 ) {
     private val client = OkHttpClient.Builder()
@@ -41,8 +45,81 @@ class LanStreamScanner(
         preferredPort: Int? = null,
         onDeviceFound: (DiscoveredStreamDevice) -> Unit
     ): StreamScanSummary = withContext(Dispatchers.IO) {
-        val subnet = resolveActiveSubnet()
-            ?: throw IllegalStateException("No active IPv4 LAN is available for discovery.")
+        val subnet = resolvePreferredScanSubnet()
+            ?: throw IllegalStateException("No reachable IPv4 LAN or hotspot subnet is available for discovery.")
+        scanSubnet(
+            subnet = subnet,
+            preferredPort = preferredPort,
+            onDeviceFound = onDeviceFound
+        )
+    }
+
+    suspend fun rediscoverProvisionedDevice(
+        settings: VideoStreamSettings,
+        expectedDeviceId: String? = null,
+        knownMdnsUrl: String? = null
+    ): ProvisionRediscoveryResult = withContext(Dispatchers.IO) {
+        val normalizedSettings = settings.normalized()
+        val ports = buildCandidatePorts(normalizedSettings.port)
+
+        val preferredHosts = linkedSetOf<String>()
+        normalizedSettings.ipAddress.takeIf(String::isNotBlank)?.let(preferredHosts::add)
+        extractHost(knownMdnsUrl)?.let(preferredHosts::add)
+        deriveMdnsHost(expectedDeviceId)?.let(preferredHosts::add)
+
+        preferredHosts.forEach { host ->
+            val device = probeHost(host = host, ports = ports) ?: return@forEach
+            if (matchesExpectedDevice(device, expectedDeviceId)) {
+                return@withContext ProvisionRediscoveryResult(
+                    discoveredDevice = device,
+                    mode = ProvisionRediscoveryMode.SearchingKnownLan
+                )
+            }
+        }
+
+        val subnets = resolveCandidateDiscoverySubnets()
+        val mode = determineProvisionRediscoveryMode(subnets)
+        if (subnets.isEmpty()) {
+            return@withContext ProvisionRediscoveryResult(mode = ProvisionRediscoveryMode.NoCandidateLan)
+        }
+
+        val udpPayload = expectedDeviceId?.takeIf(String::isNotBlank) ?: DISCOVERY_PAYLOAD
+        subnets.forEach { subnet ->
+            discoverByUdp(subnet = subnet, discoveryPayload = udpPayload)
+                .firstOrNull { matchesExpectedDevice(it, expectedDeviceId) }
+                ?.let {
+                    return@withContext ProvisionRediscoveryResult(
+                        discoveredDevice = it,
+                        mode = mode
+                    )
+                }
+
+            val matchedDevice = runCatching {
+                val matchRef = AtomicReference<DiscoveredStreamDevice?>(null)
+                scanSubnet(subnet = subnet, preferredPort = normalizedSettings.port) { device ->
+                    if (matchRef.get() == null && matchesExpectedDevice(device, expectedDeviceId)) {
+                        matchRef.compareAndSet(null, device)
+                    }
+                }
+                matchRef.get()
+            }.getOrNull()
+
+            if (matchedDevice != null) {
+                return@withContext ProvisionRediscoveryResult(
+                    discoveredDevice = matchedDevice,
+                    mode = mode
+                )
+            }
+        }
+
+        ProvisionRediscoveryResult(mode = mode)
+    }
+
+    private suspend fun scanSubnet(
+        subnet: DiscoverySubnet,
+        preferredPort: Int?,
+        onDeviceFound: (DiscoveredStreamDevice) -> Unit
+    ): StreamScanSummary {
         val hosts = buildScanHosts(subnet.address, subnet.prefixLength)
         if (hosts.isEmpty()) {
             throw IllegalStateException("The current network does not expose any scan targets.")
@@ -50,7 +127,7 @@ class LanStreamScanner(
 
         val ports = buildCandidatePorts(preferredPort)
         val discoveredCount = AtomicInteger(0)
-        val discoveredHosts = linkedSetOf<String>()
+        val discoveredHosts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
         discoverByUdp(subnet = subnet).forEach { device ->
             if (discoveredHosts.add(device.host)) {
@@ -78,69 +155,126 @@ class LanStreamScanner(
             }
         }
 
-        StreamScanSummary(
+        return StreamScanSummary(
             subnetLabel = describeSubnet(subnet.address, subnet.prefixLength),
             scannedHostCount = hosts.size,
             discoveredCount = discoveredCount.get()
         )
     }
 
-    suspend fun rediscoverProvisionedDevice(
-        settings: VideoStreamSettings,
-        expectedDeviceId: String? = null,
-        knownMdnsUrl: String? = null
-    ): DiscoveredStreamDevice? = withContext(Dispatchers.IO) {
-        val normalizedSettings = settings.normalized()
-        val ports = buildCandidatePorts(normalizedSettings.port)
+    private fun resolvePreferredScanSubnet(): DiscoverySubnet? =
+        resolveCandidateDiscoverySubnets().firstOrNull()
 
-        val preferredHosts = linkedSetOf<String>()
-        normalizedSettings.ipAddress.takeIf(String::isNotBlank)?.let(preferredHosts::add)
-        extractHost(knownMdnsUrl)?.let(preferredHosts::add)
-        deriveMdnsHost(expectedDeviceId)?.let(preferredHosts::add)
+    private fun resolveCandidateDiscoverySubnets(): List<DiscoverySubnet> {
+        val activeSubnet = resolveActiveSubnet()
+        val candidates = linkedMapOf<String, DiscoverySubnet>()
+        activeSubnet?.let { candidates[preferredSubnetKey(it)] = it }
 
-        preferredHosts.forEach { host ->
-            val device = probeHost(host = host, ports = ports) ?: return@forEach
-            if (matchesExpectedDevice(device, expectedDeviceId)) {
-                return@withContext device
+        enumerateInterfaceSubnets(activeSubnet).forEach { subnet ->
+            val key = preferredSubnetKey(subnet)
+            val existing = candidates[key]
+            if (existing == null || discoverySubnetPriority(subnet.source) < discoverySubnetPriority(existing.source)) {
+                candidates[key] = subnet
             }
         }
 
-        val subnet = resolveActiveSubnet() ?: return@withContext null
-        val udpPayload = expectedDeviceId?.takeIf(String::isNotBlank) ?: DISCOVERY_PAYLOAD
-        discoverByUdp(subnet = subnet, discoveryPayload = udpPayload)
-            .firstOrNull { matchesExpectedDevice(it, expectedDeviceId) }
-            ?.let { return@withContext it }
-
-        return@withContext runCatching {
-            var matchedDevice: DiscoveredStreamDevice? = null
-            scan(preferredPort = normalizedSettings.port) { device ->
-                if (matchedDevice == null && matchesExpectedDevice(device, expectedDeviceId)) {
-                    matchedDevice = device
-                }
-            }
-            matchedDevice
-        }.getOrNull()
+        return candidates.values.sortedWith(
+            compareBy<DiscoverySubnet>(
+                { discoverySubnetPriority(it.source) },
+                { it.interfaceName.orEmpty() },
+                { it.address.hostAddress.orEmpty() }
+            )
+        )
     }
 
-    private fun resolveActiveSubnet(): ActiveSubnet? {
+    private fun resolveActiveSubnet(): DiscoverySubnet? {
         val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java) ?: return null
         val activeNetwork = connectivityManager.activeNetwork ?: return null
+        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return null
+        val isLanTransport = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        if (!isLanTransport) {
+            return null
+        }
         val linkProperties = connectivityManager.getLinkProperties(activeNetwork) ?: return null
         val linkAddress = linkProperties.linkAddresses.firstOrNull(::isEligibleIpv4Address) ?: return null
         val address = linkAddress.address as? Inet4Address ?: return null
-        return ActiveSubnet(address = address, prefixLength = linkAddress.prefixLength)
+        return DiscoverySubnet(
+            address = address,
+            prefixLength = linkAddress.prefixLength,
+            source = DiscoverySubnetSource.ActiveNetwork,
+            interfaceName = linkProperties.interfaceName
+        )
+    }
+
+    private fun enumerateInterfaceSubnets(activeSubnet: DiscoverySubnet?): List<DiscoverySubnet> {
+        val interfaces = runCatching {
+            NetworkInterface.getNetworkInterfaces()?.let(Collections::list).orEmpty()
+        }.getOrDefault(emptyList())
+
+        return buildList {
+            interfaces.forEach { networkInterface ->
+                val interfaceName = networkInterface.name.orEmpty()
+                val normalizedName = interfaceName.lowercase()
+                if (!isEligibleNetworkInterface(networkInterface, normalizedName)) {
+                    return@forEach
+                }
+
+                networkInterface.interfaceAddresses.orEmpty().forEach { interfaceAddress ->
+                    val address = interfaceAddress.address as? Inet4Address ?: return@forEach
+                    val prefixLength = interfaceAddress.networkPrefixLength.toInt()
+                    if (!isEligiblePrivateIpv4Address(address, prefixLength)) {
+                        return@forEach
+                    }
+
+                    add(
+                        DiscoverySubnet(
+                            address = address,
+                            prefixLength = prefixLength,
+                            source = classifyDiscoverySubnetSource(
+                                interfaceName = normalizedName,
+                                address = address,
+                                prefixLength = prefixLength,
+                                activeSubnet = activeSubnet
+                            ),
+                            interfaceName = interfaceName
+                        )
+                    )
+                }
+            }
+        }
     }
 
     private fun isEligibleIpv4Address(linkAddress: LinkAddress): Boolean {
         val address = linkAddress.address
         return address is Inet4Address &&
+            address.isSiteLocalAddress &&
+            !address.isLoopbackAddress &&
+            !address.isLinkLocalAddress &&
+            linkAddress.prefixLength in 1..30 &&
+            !address.hostAddress.isNullOrBlank()
+    }
+
+    private fun isEligibleNetworkInterface(
+        networkInterface: NetworkInterface,
+        normalizedName: String
+    ): Boolean {
+        val isUsable = runCatching {
+            networkInterface.isUp && !networkInterface.isLoopback && !networkInterface.isPointToPoint
+        }.getOrDefault(false)
+        return isUsable && !isIgnoredInterfaceName(normalizedName)
+    }
+
+    private fun isEligiblePrivateIpv4Address(address: Inet4Address, prefixLength: Int): Boolean {
+        return prefixLength in 1..30 &&
+            address.isSiteLocalAddress &&
             !address.isLoopbackAddress &&
             !address.isLinkLocalAddress &&
             !address.hostAddress.isNullOrBlank()
     }
 
     private fun discoverByUdp(
-        subnet: ActiveSubnet,
+        subnet: DiscoverySubnet,
         discoveryPayload: String = DISCOVERY_PAYLOAD
     ): List<DiscoveredStreamDevice> {
         return runCatching {
@@ -326,10 +460,31 @@ data class StreamScanSummary(
     val discoveredCount: Int
 )
 
-internal data class ActiveSubnet(
+internal data class DiscoverySubnet(
     val address: Inet4Address,
-    val prefixLength: Int
+    val prefixLength: Int,
+    val source: DiscoverySubnetSource,
+    val interfaceName: String? = null
 )
+
+internal enum class DiscoverySubnetSource {
+    ActiveNetwork,
+    HotspotHost,
+    OtherLan
+}
+
+internal data class ProvisionRediscoveryResult(
+    val discoveredDevice: DiscoveredStreamDevice? = null,
+    val mode: ProvisionRediscoveryMode = ProvisionRediscoveryMode.NoCandidateLan
+)
+
+internal enum class ProvisionRediscoveryMode {
+    NoCandidateLan,
+    SearchingKnownLan,
+    SearchingActiveLan,
+    SearchingHotspotSubnet,
+    SearchingOtherLan
+}
 
 internal fun parseUdpDiscoveryResponse(payload: String): DiscoveredStreamDevice? {
     return runCatching {
@@ -433,6 +588,50 @@ internal fun calculateBroadcastAddress(localAddress: Inet4Address, prefixLength:
     return longToIpv4(broadcast)
 }
 
+internal fun determineProvisionRediscoveryMode(subnets: List<DiscoverySubnet>): ProvisionRediscoveryMode {
+    val primary = subnets.minByOrNull { discoverySubnetPriority(it.source) }
+        ?: return ProvisionRediscoveryMode.NoCandidateLan
+    return when (primary.source) {
+        DiscoverySubnetSource.ActiveNetwork -> ProvisionRediscoveryMode.SearchingActiveLan
+        DiscoverySubnetSource.HotspotHost -> ProvisionRediscoveryMode.SearchingHotspotSubnet
+        DiscoverySubnetSource.OtherLan -> ProvisionRediscoveryMode.SearchingOtherLan
+    }
+}
+
+internal fun classifyDiscoverySubnetSource(
+    interfaceName: String,
+    address: Inet4Address,
+    prefixLength: Int,
+    activeSubnet: DiscoverySubnet?
+): DiscoverySubnetSource {
+    if (activeSubnet != null && preferredSubnetKey(address, prefixLength) == preferredSubnetKey(activeSubnet)) {
+        return DiscoverySubnetSource.ActiveNetwork
+    }
+
+    return when {
+        HOTSPOT_INTERFACE_HINTS.any(interfaceName::contains) -> DiscoverySubnetSource.HotspotHost
+        activeSubnet == null && address.hostAddress.orEmpty().endsWith(".1") -> DiscoverySubnetSource.HotspotHost
+        else -> DiscoverySubnetSource.OtherLan
+    }
+}
+
+internal fun discoverySubnetPriority(source: DiscoverySubnetSource): Int = when (source) {
+    DiscoverySubnetSource.ActiveNetwork -> 0
+    DiscoverySubnetSource.HotspotHost -> 1
+    DiscoverySubnetSource.OtherLan -> 2
+}
+
+internal fun preferredSubnetKey(subnet: DiscoverySubnet): String =
+    preferredSubnetKey(subnet.address, subnet.prefixLength)
+
+internal fun preferredSubnetKey(address: Inet4Address, prefixLength: Int): String =
+    describeSubnet(address, prefixLength)
+
+private fun isIgnoredInterfaceName(interfaceName: String): Boolean {
+    return IGNORED_INTERFACE_PREFIXES.any { interfaceName.startsWith(it) } ||
+        IGNORED_INTERFACE_EXACT.contains(interfaceName)
+}
+
 private fun buildHttpUrl(host: String, port: Int, path: String): String {
     return if (port == VideoStreamSettings.DEFAULT_PORT) {
         "http://$host$path"
@@ -461,3 +660,20 @@ private const val UDP_DISCOVERY_PORT = 32108
 private const val UDP_RESPONSE_TIMEOUT_MS = 900
 private const val UDP_PACKET_BUFFER_SIZE = 2048
 private const val DISCOVERY_PAYLOAD = "DISCOVER_ESP32_CAM"
+private val HOTSPOT_INTERFACE_HINTS = listOf("softap", "swlan", "ap")
+private val IGNORED_INTERFACE_PREFIXES = listOf(
+    "rmnet",
+    "ccmni",
+    "pdp",
+    "radio",
+    "v4-rmnet",
+    "r_rmnet",
+    "rev_rmnet",
+    "clat",
+    "tun",
+    "utun",
+    "ipsec",
+    "sit",
+    "dummy"
+)
+private val IGNORED_INTERFACE_EXACT = setOf("lo")

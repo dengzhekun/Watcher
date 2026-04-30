@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import com.example.watcher.R
 import com.example.watcher.data.model.VideoStreamSettings
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -79,12 +80,16 @@ enum class StreamSource {
     FrontCameraFallback
 }
 
+private const val REMOTE_STREAM_RETRY_ATTEMPTS = 3
+private const val REMOTE_STREAM_RETRY_DELAY_MS = 750L
+
 @Composable
 fun rememberMjpegStreamState(
     settings: VideoStreamSettings,
     isPlaying: Boolean,
     reconnectToken: Int = 0,
-    onFrameUpdate: (Bitmap?) -> Unit = {}
+    onFrameUpdate: (Bitmap?) -> Unit = {},
+    onStreamSourceChanged: (StreamSource) -> Unit = {}
 ): MjpegStreamUiState {
     var currentFrame by remember { mutableStateOf<Bitmap?>(null) }
     var connectionStatus by remember { mutableStateOf<ConnectionStatus>(ConnectionStatus.Disconnected) }
@@ -99,6 +104,10 @@ fun rememberMjpegStreamState(
         reconnectToken = reconnectToken,
         onFrameUpdate = onFrameUpdate
     )
+
+    LaunchedEffect(source) {
+        onStreamSourceChanged(source)
+    }
 
     LaunchedEffect(isPlaying, settings.streamUrl, reconnectToken) {
         if (!isPlaying) {
@@ -120,6 +129,7 @@ fun rememberMjpegStreamState(
         activeStreamUrl = settings.streamDisplayUrl
         withContext(Dispatchers.IO) {
             var shouldUseFallback = false
+            var streamStopped = false
             try {
                 val client = OkHttpClient.Builder()
                     .connectTimeout(4, TimeUnit.SECONDS)
@@ -127,97 +137,122 @@ fun rememberMjpegStreamState(
                     .build()
                 var lastError: String? = null
 
-                for ((index, streamUrl) in settings.candidateStreamUrls.withIndex()) {
-                    withContext(Dispatchers.Main) {
-                        activeStreamUrl = streamUrl
-                    }
-
-                    val request = Request.Builder()
-                        .url(streamUrl)
-                        .build()
-
-                    client.newCall(request).execute().use { response ->
-                        if (!response.isSuccessful) {
-                            lastError = "HTTP ${response.code}"
-                            if (index == settings.candidateStreamUrls.lastIndex) {
-                                withContext(Dispatchers.Main) {
-                                    connectionStatus = ConnectionStatus.Error(lastError ?: "Connection failed")
-                                }
-                            }
-                            return@use
+                candidateLoop@ for ((index, streamUrl) in settings.candidateStreamUrls.withIndex()) {
+                    for (attempt in 0 until REMOTE_STREAM_RETRY_ATTEMPTS) {
+                        if (!isActive || !isPlaying) {
+                            streamStopped = true
+                            break@candidateLoop
                         }
 
-                        val body = response.body ?: run {
-                            lastError = "Empty response body"
-                            if (index == settings.candidateStreamUrls.lastIndex) {
-                                withContext(Dispatchers.Main) {
-                                    connectionStatus = ConnectionStatus.Error(lastError ?: "Connection failed")
-                                }
-                            }
-                            return@use
-                        }
+                        var attemptFailed = false
 
-                        val reader = MjpegReader(BufferedInputStream(body.byteStream(), 8_192))
                         withContext(Dispatchers.Main) {
-                            connectionStatus = ConnectionStatus.Connected
+                            connectionStatus = ConnectionStatus.Connecting
+                            activeStreamUrl = streamUrl
                             source = StreamSource.RemoteMjpeg
                             sourceLabel = settings.streamDisplayUrl
                         }
 
-                        var frameCount = 0
-                        var lastFpsTimestamp = System.currentTimeMillis()
+                        try {
+                            val request = Request.Builder()
+                                .url(streamUrl)
+                                .build()
 
-                        while (isActive && isPlaying) {
-                            try {
-                                val frame = reader.readFrame()
-                                if (frame != null) {
-                                    withContext(Dispatchers.Main) {
-                                        currentFrame = frame
-                                        source = StreamSource.RemoteMjpeg
-                                        sourceLabel = settings.streamDisplayUrl
-                                        onFrameUpdate(frame)
-                                    }
-                                    frameCount += 1
-                                    val now = System.currentTimeMillis()
-                                    if (now - lastFpsTimestamp >= 1_000) {
-                                        withContext(Dispatchers.Main) {
-                                            fps = frameCount
+                            client.newCall(request).execute().use { response ->
+                                if (!response.isSuccessful) {
+                                    lastError = "HTTP ${response.code}"
+                                    attemptFailed = true
+                                    return@use
+                                }
+
+                                val body = response.body ?: run {
+                                    lastError = "Empty response body"
+                                    attemptFailed = true
+                                    return@use
+                                }
+
+                                val reader = MjpegReader(BufferedInputStream(body.byteStream(), 8_192))
+                                withContext(Dispatchers.Main) {
+                                    connectionStatus = ConnectionStatus.Connected
+                                    source = StreamSource.RemoteMjpeg
+                                    sourceLabel = settings.streamDisplayUrl
+                                }
+
+                                var frameCount = 0
+                                var lastFpsTimestamp = System.currentTimeMillis()
+
+                                while (isActive && isPlaying) {
+                                    try {
+                                        val frame = reader.readFrame()
+                                        if (frame != null) {
+                                            withContext(Dispatchers.Main) {
+                                                currentFrame = frame
+                                                source = StreamSource.RemoteMjpeg
+                                                sourceLabel = settings.streamDisplayUrl
+                                                onFrameUpdate(frame)
+                                            }
+                                            frameCount += 1
+                                            val now = System.currentTimeMillis()
+                                            if (now - lastFpsTimestamp >= 1_000) {
+                                                withContext(Dispatchers.Main) {
+                                                    fps = frameCount
+                                                }
+                                                frameCount = 0
+                                                lastFpsTimestamp = now
+                                            }
                                         }
-                                        frameCount = 0
-                                        lastFpsTimestamp = now
+                                    } catch (_: SocketTimeoutException) {
+                                        continue
+                                    } catch (error: Exception) {
+                                        Log.e("MjpegStream", "Failed to read frame", error)
+                                        lastError = error.message ?: "Stream read failed"
+                                        attemptFailed = true
+                                        break
                                     }
                                 }
-                            } catch (_: SocketTimeoutException) {
-                                continue
-                            } catch (error: Exception) {
-                                Log.e("MjpegStream", "Failed to read frame", error)
-                                lastError = error.message ?: "Stream read failed"
-                                shouldUseFallback = true
-                                break
+
+                                if (!isActive || !isPlaying) {
+                                    streamStopped = true
+                                } else if (!attemptFailed) {
+                                    lastError = lastError ?: "Stream disconnected"
+                                    attemptFailed = true
+                                }
                             }
+                        } catch (error: Exception) {
+                            Log.e("MjpegStream", "Failed to connect stream", error)
+                            lastError = error.message ?: "Connection failed"
+                            attemptFailed = true
                         }
 
-                        if (!shouldUseFallback && connectionStatus is ConnectionStatus.Connected) {
-                            return@withContext
+                        if (streamStopped) {
+                            break@candidateLoop
                         }
 
-                        if (index == settings.candidateStreamUrls.lastIndex) {
-                            shouldUseFallback = true
-                        } else {
+                        if (!attemptFailed) {
+                            break@candidateLoop
+                        }
+
+                        val hasMoreAttempts = attempt < REMOTE_STREAM_RETRY_ATTEMPTS - 1
+                        if (hasMoreAttempts) {
                             withContext(Dispatchers.Main) {
                                 connectionStatus = ConnectionStatus.Connecting
-                                currentFrame = null
-                                fps = 0
-                                activeStreamUrl = settings.streamDisplayUrl
-                                source = StreamSource.RemoteMjpeg
-                                sourceLabel = settings.streamDisplayUrl
-                                onFrameUpdate(null)
                             }
+                            delay(REMOTE_STREAM_RETRY_DELAY_MS)
+                            continue
                         }
-                    }
 
-                    if (shouldUseFallback) {
-                        break
+                        val hasMoreCandidates = index < settings.candidateStreamUrls.lastIndex
+                        if (hasMoreCandidates) {
+                            withContext(Dispatchers.Main) {
+                                connectionStatus = ConnectionStatus.Connecting
+                            }
+                            break
+                        }
+
+                        shouldUseFallback = true
+                        withContext(Dispatchers.Main) {
+                            connectionStatus = ConnectionStatus.Error(lastError ?: "Connection failed")
+                        }
                     }
                 }
             } catch (error: Exception) {
@@ -247,7 +282,7 @@ fun rememberMjpegStreamState(
                         source = StreamSource.None
                         sourceLabel = ""
                         onFrameUpdate(null)
-                        if (connectionStatus is ConnectionStatus.Connected) {
+                        if (!streamStopped && connectionStatus is ConnectionStatus.Connected) {
                             connectionStatus = ConnectionStatus.Disconnected
                         }
                     }
@@ -285,12 +320,14 @@ fun MjpegStreamPlayer(
     onPlayingChange: (Boolean) -> Unit,
     onFrameCaptured: (Bitmap) -> Unit = {},
     onFrameUpdate: (Bitmap?) -> Unit = {},
+    onStreamSourceChanged: (StreamSource) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val streamState = rememberMjpegStreamState(
         settings = settings,
         isPlaying = isPlaying,
-        onFrameUpdate = onFrameUpdate
+        onFrameUpdate = onFrameUpdate,
+        onStreamSourceChanged = onStreamSourceChanged
     )
 
     val connectionAccent = when (streamState.connectionStatus) {

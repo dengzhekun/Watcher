@@ -1,26 +1,25 @@
 package com.example.watcher.ui.viewmodel
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.watcher.data.local.litert.DownloadProgress
-import com.example.watcher.data.local.litert.DownloadState
-import com.example.watcher.data.local.litert.LiteRtBackendType
 import com.example.watcher.data.local.litert.LiteRtConfigStore
 import com.example.watcher.data.local.litert.LiteRtEngineManager
 import com.example.watcher.data.local.litert.LiteRtEngineStatus
 import com.example.watcher.data.local.litert.LiteRtLlmProvider
 import com.example.watcher.data.local.litert.LiteRtModelConfig
 import com.example.watcher.data.local.litert.LiteRtModelDownloader
+import com.example.watcher.data.local.litert.LiteRtModelLocator
 import com.example.watcher.data.remote.ChatMessage
 import com.example.watcher.watcherApplication
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 
 data class ChatEntry(
     val role: String,
@@ -37,6 +36,7 @@ class LiteRtViewModel(application: Application) : AndroidViewModel(application) 
     private val configStore: LiteRtConfigStore = container.liteRtConfigStore
     private val provider: LiteRtLlmProvider = container.liteRtProvider
     private val downloader: LiteRtModelDownloader = container.liteRtModelDownloader
+    private val modelLocator: LiteRtModelLocator = container.liteRtModelLocator
 
     val engineStatus: StateFlow<LiteRtEngineStatus> = engineManager.status
 
@@ -50,19 +50,13 @@ class LiteRtViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun isModelDownloaded(): Boolean = downloader.isModelDownloaded()
+    fun isModelDownloaded(): Boolean = modelLocator.hasAvailableModel(_savedConfig.value?.modelPath)
 
     fun downloadModel() {
         viewModelScope.launch {
             val result = downloader.downloadModel()
             result.onSuccess { modelPath ->
-                // Auto-load after download
-                val config = LiteRtModelConfig(
-                    modelPath = modelPath,
-                    displayName = "Gemma 4 E2B",
-                    backend = LiteRtBackendType.GPU,
-                    visionBackend = LiteRtBackendType.GPU
-                )
+                val config = modelLocator.defaultConfig(modelPath)
                 configStore.saveConfig(config)
                 _savedConfig.value = config
                 engineManager.initialize(config)
@@ -70,7 +64,7 @@ class LiteRtViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private val _savedConfig = MutableStateFlow(configStore.loadConfig())
+    private val _savedConfig = MutableStateFlow(resolveSavedConfig())
     val savedConfig: StateFlow<LiteRtModelConfig?> = _savedConfig.asStateFlow()
 
     private val _chatHistory = MutableStateFlow<List<ChatEntry>>(emptyList())
@@ -84,9 +78,23 @@ class LiteRtViewModel(application: Application) : AndroidViewModel(application) 
 
     fun loadEngine(config: LiteRtModelConfig) {
         viewModelScope.launch {
-            configStore.saveConfig(config)
-            _savedConfig.value = config
-            engineManager.initialize(config)
+            val resolvedConfig = modelLocator.resolveConfig(config) ?: config
+            configStore.saveConfig(resolvedConfig)
+            _savedConfig.value = resolvedConfig
+            engineManager.initialize(resolvedConfig)
+        }
+    }
+
+    fun scanExistingModel() {
+        viewModelScope.launch {
+            val storedConfig = configStore.loadConfig()
+            val resolvedConfig = modelLocator.resolveConfig(storedConfig)
+            if (resolvedConfig != null) {
+                configStore.saveConfig(resolvedConfig)
+                _savedConfig.value = resolvedConfig
+            } else {
+                _savedConfig.value = storedConfig
+            }
         }
     }
 
@@ -174,6 +182,19 @@ class LiteRtViewModel(application: Application) : AndroidViewModel(application) 
             tempFile.absolutePath
         } catch (_: Exception) {
             null
+        }
+    }
+
+    private fun resolveSavedConfig(): LiteRtModelConfig? {
+        val storedConfig = configStore.loadConfig()
+        val resolvedConfig = modelLocator.resolveConfig(storedConfig)
+        return if (resolvedConfig != null) {
+            if (resolvedConfig != storedConfig) {
+                configStore.saveConfig(resolvedConfig)
+            }
+            resolvedConfig
+        } else {
+            storedConfig
         }
     }
 }

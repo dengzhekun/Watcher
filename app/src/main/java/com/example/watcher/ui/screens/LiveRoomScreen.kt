@@ -8,23 +8,31 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,6 +52,7 @@ import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -73,6 +82,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.watcher.R
 import com.example.watcher.data.model.AiAudienceEntity
 import com.example.watcher.data.model.AiAudienceLiveState
@@ -80,8 +91,6 @@ import com.example.watcher.data.model.AudienceAction
 import com.example.watcher.data.model.GiftType
 import com.example.watcher.data.model.AiAudienceMessageEntity
 import com.example.watcher.data.model.LiveSpeechState
-import com.example.watcher.data.model.CommentaryEntry
-import com.example.watcher.data.model.CommentaryEntryStatus
 import com.example.watcher.data.model.DanmakuItem
 import com.example.watcher.data.model.LiveCommentaryState
 import com.example.watcher.data.model.VideoStreamSettings
@@ -96,6 +105,34 @@ import kotlinx.coroutines.flow.SharedFlow
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private val liveCommentaryTextScheme = CommentaryTextScheme(
+    recording = "录制中…",
+    uploading = "上传中…",
+    processing = "处理中…",
+    analyzing = "分析中…",
+    streamingPlaceholder = "…",
+    skippedFallback = "已跳过（积压保护）",
+    failedFallback = "分析失败"
+)
+
+private val liveMemoryLabelScheme = MemoryLabelScheme(
+    builderTag = "建设者",
+    sceneLabel = "场景",
+    entitiesLabel = "实体",
+    actionLabel = "动态",
+    asksLabel = "ASK",
+    askPrefix = "? ",
+    memoryALabel = "记忆A",
+    memoryBLabel = "记忆B"
+)
+
+private val liveTranscriptTextScheme = TranscriptTextScheme(
+    listeningText = "🎤 聆听中…",
+    waitingText = "🎤 等待语音…",
+    mutedText = "🎤 已静音",
+    showMicIcon = true
+)
 
 @Composable
 internal fun LiveRoomScreen(
@@ -341,14 +378,16 @@ internal fun LiveRoomScreen(
                             .width(320.dp)
                             .padding(end = 8.dp)
                     ) {
-                        MemoryStatusBar(
+                        MemoryStatusPanel(
                             state = commentaryState,
-                            modifier = Modifier.weight(0.45f)
+                            modifier = Modifier.weight(0.45f),
+                            labels = liveMemoryLabelScheme
                         )
                         if (commentaryState.entries.isNotEmpty()) {
-                            CommentaryFeed(
+                            CommentaryFeedPanel(
                                 entries = commentaryState.entries,
-                                modifier = Modifier.weight(0.55f)
+                                modifier = Modifier.weight(0.55f),
+                                textScheme = liveCommentaryTextScheme
                             )
                         }
                     }
@@ -627,12 +666,13 @@ internal fun LiveRoomScreen(
         }
 
         // Speech transcript strip (center-bottom, prominent)
-        SpeechTranscriptStrip(
+        SpeechTranscriptStripPanel(
             state = speechState,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth(0.6f)
-                .padding(bottom = 76.dp)
+                .padding(bottom = 76.dp),
+            textScheme = liveTranscriptTextScheme
         )
 
         // AI Audience quick panel (lightweight, landscape-friendly)
@@ -644,531 +684,6 @@ internal fun LiveRoomScreen(
                 },
                 onDismiss = { showAudienceConfig = false }
             )
-        }
-    }
-}
-
-// --- Commentary Feed ---
-
-@Composable
-private fun CommentaryFeed(
-    entries: List<CommentaryEntry>,
-    modifier: Modifier = Modifier
-) {
-    val listState = rememberLazyListState()
-
-    // Auto-scroll to top when new entries arrive
-    LaunchedEffect(entries.firstOrNull()?.segmentIndex) {
-        if (entries.isNotEmpty()) {
-            listState.animateScrollToItem(0)
-        }
-    }
-
-    LazyColumn(
-        state = listState,
-        modifier = modifier
-            .background(
-                Color.Black.copy(alpha = 0.45f),
-                RoundedCornerShape(12.dp)
-            )
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        items(
-            items = entries,
-            key = { it.segmentIndex }
-        ) { entry ->
-            CommentaryEntryCard(entry)
-        }
-    }
-}
-
-@Composable
-private fun CommentaryEntryCard(entry: CommentaryEntry) {
-    val displayText = when (entry.status) {
-        CommentaryEntryStatus.Recording -> "录制中…"
-        CommentaryEntryStatus.Uploading -> "上传中…"
-        CommentaryEntryStatus.Processing -> "处理中…"
-        CommentaryEntryStatus.Analyzing -> "分析中…"
-        CommentaryEntryStatus.Streaming -> entry.streamingText.ifBlank { "…" }
-        CommentaryEntryStatus.Completed -> entry.text
-        CommentaryEntryStatus.Skipped -> entry.text.ifBlank { "已跳过（积压保护）" }
-        CommentaryEntryStatus.Failed -> entry.text.ifBlank { "分析失败" }
-    }
-
-    val isActive = entry.status in setOf(
-        CommentaryEntryStatus.Recording,
-        CommentaryEntryStatus.Uploading,
-        CommentaryEntryStatus.Processing,
-        CommentaryEntryStatus.Analyzing,
-        CommentaryEntryStatus.Streaming
-    )
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                when (entry.status) {
-                    CommentaryEntryStatus.Failed -> Color.Red.copy(alpha = 0.15f)
-                    CommentaryEntryStatus.Skipped -> Color(0xFFFFB300).copy(alpha = 0.18f)
-                    else -> Color.Transparent
-                },
-                RoundedCornerShape(8.dp)
-            )
-            .padding(horizontal = 6.dp, vertical = 4.dp)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(
-                text = entry.displayTimestamp,
-                color = Color(0xFF4CAF50),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-            if (entry.consumerId > 0) {
-                Text(
-                    text = "#${entry.consumerId}",
-                    color = Color.White.copy(alpha = 0.4f),
-                    fontSize = 9.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-            if (isActive) {
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFFFFA726))
-                )
-            }
-        }
-
-        Text(
-            text = displayText,
-            color = Color.White.copy(alpha = if (isActive) 0.7f else 0.95f),
-            fontSize = 12.sp,
-            lineHeight = 16.sp,
-            maxLines = 6,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-private fun MemoryStatusBar(state: LiveCommentaryState, modifier: Modifier = Modifier) {
-    val hasAnything = state.memoryA.isNotBlank() || state.latestMemoryB.isNotBlank() ||
-            state.sceneMemory.isNotBlank() || state.entityMemory.isNotBlank()
-
-    if (!hasAnything) return
-
-    LazyColumn(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(bottom = 6.dp)
-            .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        // Scene memory (three-layer)
-        if (state.scenePhase.isNotBlank()) {
-            item {
-                MemoryTag("建设者", state.scenePhase, Color(0xFF66BB6A))
-            }
-        }
-        if (state.sceneMemory.isNotBlank()) {
-            item { MemoryRow("场景", state.sceneMemory, Color(0xFF66BB6A), 3) }
-        }
-        if (state.entityMemory.isNotBlank()) {
-            item { MemoryRow("实体", state.entityMemory, Color(0xFF29B6F6), 4) }
-        }
-        if (state.actionSummary.isNotBlank()) {
-            item { MemoryRow("动态", state.actionSummary, Color(0xFFFFCA28), 2) }
-        }
-        if (state.pendingAsks.isNotEmpty()) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("ASK", color = Color(0xFFEF5350), fontSize = 9.sp, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.background(Color(0xFFEF5350).copy(alpha = 0.2f), RoundedCornerShape(3.dp)).padding(horizontal = 4.dp, vertical = 1.dp))
-                    state.pendingAsks.forEach {
-                        Text("? $it", color = Color(0xFFEF5350).copy(alpha = 0.8f), fontSize = 9.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-            }
-        }
-
-        // General memory (memoryA/B)
-        if (state.memoryA.isNotBlank()) {
-            item { MemoryRow("记忆A", state.memoryA, Color(0xFF42A5F5), 3) }
-        }
-        if (state.latestMemoryB.isNotBlank()) {
-            item { MemoryRow("记忆B", state.latestMemoryB, Color(0xFFFFA726), 2) }
-        }
-    }
-}
-
-@Composable
-private fun MemoryTag(label: String, value: String, color: Color) {
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = color, fontSize = 9.sp, fontWeight = FontWeight.Bold,
-            modifier = Modifier.background(color.copy(alpha = 0.2f), RoundedCornerShape(3.dp)).padding(horizontal = 4.dp, vertical = 1.dp))
-        Text(value, color = Color.White.copy(alpha = 0.5f), fontSize = 9.sp)
-    }
-}
-
-@Composable
-private fun MemoryRow(label: String, text: String, color: Color, maxLines: Int) {
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Top) {
-        Text(label, color = color, fontSize = 9.sp, fontWeight = FontWeight.Bold,
-            modifier = Modifier.background(color.copy(alpha = 0.2f), RoundedCornerShape(3.dp)).padding(horizontal = 4.dp, vertical = 1.dp))
-        Text(text, color = Color.White.copy(alpha = 0.75f), fontSize = 9.sp, lineHeight = 12.sp,
-            maxLines = maxLines, overflow = TextOverflow.Ellipsis)
-    }
-}
-
-// --- Speech Transcript Strip ---
-
-@Composable
-private fun SpeechTranscriptStrip(
-    state: LiveSpeechState,
-    modifier: Modifier = Modifier
-) {
-    if (!state.isActive) return
-
-    val recent = state.transcripts.take(3)
-
-    Column(
-        modifier = modifier
-            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Listening indicator + error
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Mic,
-                contentDescription = null,
-                tint = if (state.isListening) Color(0xFF66BB6A) else Color.White.copy(alpha = 0.35f),
-                modifier = Modifier.size(14.dp)
-            )
-            Text(
-                text = state.errorMessage
-                    ?: if (state.isListening) "🎤 聆听中…"
-                    else if (!state.isMicEnabled) "🎤 已静音"
-                    else "🎤 等待语音…",
-                color = if (state.errorMessage != null) Color(0xFFEF5350) else Color.White.copy(alpha = 0.5f),
-                fontSize = 11.sp
-            )
-        }
-
-        for (entry in recent) {
-            Text(
-                text = entry.text,
-                color = Color.White.copy(alpha = if (entry.isFinal) 0.9f else 0.5f),
-                fontSize = 13.sp,
-                fontWeight = if (entry.isFinal) FontWeight.Normal else FontWeight.Light,
-                lineHeight = 17.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-    }
-}
-
-// --- Audience name color palette (bright, no dark colors) ---
-
-private val audienceNameColors = listOf(
-    Color(0xFF81D4FA), // light blue
-    Color(0xFFFFAB91), // salmon
-    Color(0xFFA5D6A7), // light green
-    Color(0xFFCE93D8), // lavender
-    Color(0xFFFFE082), // gold
-    Color(0xFF80DEEA), // cyan
-    Color(0xFFF48FB1), // pink
-    Color(0xFFE6EE9C), // lime
-    Color(0xFFB39DDB), // light purple
-    Color(0xFFFFCC80), // peach
-)
-
-private fun audienceColor(name: String): Color {
-    val index = (name.hashCode().and(0x7FFFFFFF)) % audienceNameColors.size
-    return audienceNameColors[index]
-}
-
-// --- AI Audience Chat Panel (left side) ---
-
-@Composable
-private fun AiAudienceChatPanel(
-    messages: List<AiAudienceMessageEntity>,
-    modifier: Modifier = Modifier
-) {
-    val listState = rememberLazyListState()
-    val timeFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-
-    LaunchedEffect(messages.firstOrNull()?.id) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(0)
-        }
-    }
-
-    LazyColumn(
-        state = listState,
-        modifier = modifier
-            .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        items(items = messages, key = { it.id }) { msg ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 2.dp)
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = msg.audienceName,
-                        color = audienceColor(msg.audienceName),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = timeFormat.format(Date(msg.timestamp)),
-                        color = Color.White.copy(alpha = 0.35f),
-                        fontSize = 9.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-                Text(
-                    text = msg.content,
-                    color = Color.White.copy(alpha = 0.9f),
-                    fontSize = 12.sp,
-                    lineHeight = 16.sp,
-                    maxLines = 4,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-    }
-}
-
-// --- Danmaku Overlay ---
-
-private data class DanmakuLane(
-    val item: DanmakuItem,
-    val lane: Int,
-    val startTime: Long
-)
-
-@Composable
-private fun DanmakuOverlay(
-    danmakuFlow: SharedFlow<DanmakuItem>,
-    onHighlight: (DanmakuItem) -> Unit = {}
-) {
-    val activeDanmaku = remember { mutableStateListOf<DanmakuLane>() }
-    val seenIds = remember { mutableSetOf<Long>() }
-    val laneCount = 5
-    val durationMs = 10000L
-
-    // Single collector for all danmaku — handles display + highlight detection
-    LaunchedEffect(Unit) {
-        danmakuFlow.collect { item ->
-            // ID-based dedup: skip if already displayed
-            if (!seenIds.add(item.id)) return@collect
-
-            // Detect highlight gift
-            if (item.action is AudienceAction.Gift &&
-                (item.action as AudienceAction.Gift).gift == GiftType.HIGHLIGHT
-            ) {
-                onHighlight(item)
-            }
-
-            val now = System.currentTimeMillis()
-            val usedLanes = activeDanmaku
-                .filter { now - it.startTime < durationMs / 2 }
-                .map { it.lane }
-                .toSet()
-            val lane = (0 until laneCount).firstOrNull { it !in usedLanes }
-                ?: (0 until laneCount).random()
-            activeDanmaku.add(DanmakuLane(item, lane, now))
-            activeDanmaku.removeAll { now - it.startTime > durationMs + 1000 }
-
-            // Prevent seenIds from growing forever
-            if (seenIds.size > 200) {
-                val idsToKeep = activeDanmaku.map { it.item.id }.toSet()
-                seenIds.retainAll(idsToKeep)
-            }
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(2000)
-            val now = System.currentTimeMillis()
-            activeDanmaku.removeAll { now - it.startTime > durationMs + 1000 }
-        }
-    }
-
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val widthPx = with(LocalDensity.current) { maxWidth.toPx() }
-        val laneHeightDp = maxHeight / laneCount
-
-        for (danmaku in activeDanmaku.toList()) {
-            DanmakuText(
-                audienceName = danmaku.item.audienceName,
-                content = danmaku.item.content,
-                action = danmaku.item.action,
-                lane = danmaku.lane,
-                laneHeightDp = laneHeightDp,
-                totalWidthPx = widthPx,
-                durationMs = durationMs,
-                startTime = danmaku.startTime,
-                itemKey = danmaku.item.id
-            )
-        }
-    }
-}
-
-@Composable
-private fun DanmakuText(
-    audienceName: String,
-    content: String,
-    action: AudienceAction,
-    lane: Int,
-    laneHeightDp: Dp,
-    totalWidthPx: Float,
-    durationMs: Long,
-    startTime: Long,
-    itemKey: Long
-) {
-    var offsetX by remember(itemKey) { mutableStateOf(totalWidthPx) }
-
-    LaunchedEffect(itemKey) {
-        val totalDistance = totalWidthPx * 2
-        val stepMs = 16L
-        var elapsed = System.currentTimeMillis() - startTime
-
-        while (elapsed < durationMs) {
-            val progress = elapsed.toFloat() / durationMs
-            offsetX = totalWidthPx - (totalDistance * progress)
-            delay(stepMs)
-            elapsed = System.currentTimeMillis() - startTime
-        }
-        offsetX = -totalWidthPx
-    }
-
-    val nameColor = audienceColor(audienceName)
-    val actionPrefix = when (action) {
-        is AudienceAction.Like -> "❤️ "
-        is AudienceAction.Gift -> "${action.gift.emoji} "
-        else -> ""
-    }
-    val isGift = action is AudienceAction.Gift
-    val textColor = if (isGift) Color(0xFFFFD700) else Color.White.copy(alpha = 0.85f)
-    val fontSize = if (isGift) 16.sp else 14.sp
-
-    val annotatedText = buildAnnotatedString {
-        if (actionPrefix.isNotEmpty()) append(actionPrefix)
-        withStyle(SpanStyle(color = nameColor, fontWeight = FontWeight.Bold)) {
-            append(audienceName)
-        }
-        append(": ")
-        withStyle(SpanStyle(color = textColor)) {
-            append(content)
-        }
-    }
-
-    Text(
-        text = annotatedText,
-        fontSize = fontSize,
-        fontWeight = FontWeight.Medium,
-        maxLines = 1,
-        modifier = Modifier
-            .offset { IntOffset(offsetX.toInt(), 0) }
-            .padding(top = laneHeightDp * lane)
-    )
-}
-
-// --- Audience Quick Panel (landscape-friendly) ---
-
-@Composable
-private fun AudienceQuickPanel(
-    audiences: List<AiAudienceEntity>,
-    onToggle: (AiAudienceEntity, Boolean) -> Unit,
-    onDismiss: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.5f))
-            .clickable(onClick = onDismiss)
-    ) {
-        Row(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 80.dp)
-                .background(Color(0xFF1E1E2E).copy(alpha = 0.95f), RoundedCornerShape(14.dp))
-                .clickable(enabled = false) {}
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "👥",
-                fontSize = 18.sp
-            )
-
-            if (audiences.isEmpty()) {
-                Text(
-                    "暂无观众，请在竖屏管理中心添加",
-                    color = Color.White.copy(alpha = 0.5f),
-                    fontSize = 12.sp
-                )
-            } else {
-                audiences.forEach { audience ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier
-                            .background(
-                                Color.White.copy(alpha = if (audience.enabled) 0.08f else 0.03f),
-                                RoundedCornerShape(10.dp)
-                            )
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = audienceColor(audience.name).let { color ->
-                                audience.name
-                            },
-                            color = audienceColor(audience.name),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "${audience.audienceType.label} · ${audience.heartbeatIntervalSeconds}s",
-                            color = Color.White.copy(alpha = 0.4f),
-                            fontSize = 10.sp
-                        )
-                        Switch(
-                            checked = audience.enabled,
-                            onCheckedChange = { onToggle(audience, it) },
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = Color(0xFF42A5F5)
-                            ),
-                            modifier = Modifier.height(20.dp)
-                        )
-                    }
-                }
-            }
         }
     }
 }

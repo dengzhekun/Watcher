@@ -1,4 +1,7 @@
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
@@ -13,6 +16,21 @@ val localProperties = Properties().apply {
         localFile.inputStream().use(::load)
     }
 }
+
+val versionPropertiesFile = rootProject.file("version.properties")
+fun loadVersionProperties(): Properties {
+    return Properties().apply {
+        if (versionPropertiesFile.exists()) {
+            FileInputStream(versionPropertiesFile).use(::load)
+        }
+    }
+}
+val versionProperties = loadVersionProperties()
+
+val versionNameBase = versionProperties.getProperty("VERSION_NAME_BASE", "1.0").trim()
+val storedVersionCode = versionProperties.getProperty("VERSION_CODE", "1").toIntOrNull() ?: 1
+val resolvedVersionCode = storedVersionCode
+val resolvedVersionName = "$versionNameBase.$resolvedVersionCode"
 
 fun buildConfigString(value: String): String {
     val escaped = value
@@ -29,15 +47,15 @@ android {
         applicationId = "com.example.watcher"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = resolvedVersionCode
+        versionName = resolvedVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "API_KEY", buildConfigString(""))
-        buildConfigField("String", "SPEECH_APP_ID", buildConfigString(""))
-        buildConfigField("String", "SPEECH_ACCESS_KEY_ID", buildConfigString(""))
-        buildConfigField("String", "SPEECH_ACCESS_KEY_SECRET", buildConfigString(""))
+        buildConfigField("String", "VOLCENGINE_ASR_APP_KEY", buildConfigString(""))
+        buildConfigField("String", "VOLCENGINE_ASR_ACCESS_KEY", buildConfigString(""))
+        buildConfigField("String", "VOLCENGINE_ASR_RESOURCE_ID", buildConfigString(""))
     }
 
     signingConfigs {
@@ -67,22 +85,22 @@ android {
     buildTypes {
         debug {
             val apiKey = localProperties.getProperty("API_KEY", "")
-            val speechAppId = localProperties.getProperty("SPEECH_APP_ID", "")
-            val speechAccessKeyId = localProperties.getProperty("SPEECH_ACCESS_KEY_ID", "")
-            val speechAccessKeySecret = localProperties.getProperty("SPEECH_ACCESS_KEY_SECRET", "")
+            val volcengineAsrAppKey = localProperties.getProperty("VOLCENGINE_ASR_APP_KEY", "")
+            val volcengineAsrAccessKey = localProperties.getProperty("VOLCENGINE_ASR_ACCESS_KEY", "")
+            val volcengineAsrResourceId = localProperties.getProperty("VOLCENGINE_ASR_RESOURCE_ID", "")
 
             buildConfigField("String", "API_KEY", buildConfigString(apiKey))
-            buildConfigField("String", "SPEECH_APP_ID", buildConfigString(speechAppId))
-            buildConfigField("String", "SPEECH_ACCESS_KEY_ID", buildConfigString(speechAccessKeyId))
-            buildConfigField("String", "SPEECH_ACCESS_KEY_SECRET", buildConfigString(speechAccessKeySecret))
+            buildConfigField("String", "VOLCENGINE_ASR_APP_KEY", buildConfigString(volcengineAsrAppKey))
+            buildConfigField("String", "VOLCENGINE_ASR_ACCESS_KEY", buildConfigString(volcengineAsrAccessKey))
+            buildConfigField("String", "VOLCENGINE_ASR_RESOURCE_ID", buildConfigString(volcengineAsrResourceId))
         }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             buildConfigField("String", "API_KEY", buildConfigString(""))
-            buildConfigField("String", "SPEECH_APP_ID", buildConfigString(""))
-            buildConfigField("String", "SPEECH_ACCESS_KEY_ID", buildConfigString(""))
-            buildConfigField("String", "SPEECH_ACCESS_KEY_SECRET", buildConfigString(""))
+            buildConfigField("String", "VOLCENGINE_ASR_APP_KEY", buildConfigString(""))
+            buildConfigField("String", "VOLCENGINE_ASR_ACCESS_KEY", buildConfigString(""))
+            buildConfigField("String", "VOLCENGINE_ASR_RESOURCE_ID", buildConfigString(""))
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -96,8 +114,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    kotlinOptions {
-        jvmTarget = "11"
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_11)
+        }
     }
     buildFeatures {
         compose = true
@@ -105,6 +125,43 @@ android {
     }
     androidResources {
         noCompress += "litertlm"
+    }
+}
+
+val renameReleaseApk by tasks.registering {
+    doLast {
+        val renamedApkName = "watcher-v${resolvedVersionName}-${resolvedVersionCode}-release.apk"
+        val candidateApkFiles = listOf(
+            layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile,
+            rootProject.file("app/release/app-release.apk")
+        )
+
+        candidateApkFiles
+            .filter { it.exists() }
+            .forEach { sourceApk ->
+                val renamedApk = sourceApk.parentFile.resolve(renamedApkName)
+                sourceApk.copyTo(renamedApk, overwrite = true)
+            }
+    }
+}
+
+tasks.matching { it.name == "assembleRelease" || it.name == "packageRelease" }.configureEach {
+    finalizedBy(renameReleaseApk)
+}
+
+val bumpReleaseVersion by tasks.registering {
+    group = "release"
+    description = "Increment VERSION_CODE in version.properties for the next release build."
+    doLast {
+        val latestProperties = loadVersionProperties()
+        val latestBase = latestProperties.getProperty("VERSION_NAME_BASE", "1.0").trim()
+        val latestCode = latestProperties.getProperty("VERSION_CODE", "1").toIntOrNull() ?: 1
+        latestProperties["VERSION_NAME_BASE"] = latestBase
+        latestProperties["VERSION_CODE"] = (latestCode + 1).toString()
+        FileOutputStream(versionPropertiesFile).use { output ->
+            latestProperties.store(output, "Auto-generated release version state")
+        }
+        println("Bumped release version to $latestBase.${latestCode + 1} (${latestCode + 1})")
     }
 }
 

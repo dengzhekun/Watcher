@@ -19,7 +19,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -59,6 +62,7 @@ import com.example.watcher.data.model.StorageSummary
 import kotlinx.coroutines.flow.SharedFlow
 import com.example.watcher.data.model.VideoStreamSettings
 import com.example.watcher.ui.components.BottomGlassScrim
+import com.example.watcher.ui.components.StreamSource
 import com.example.watcher.ui.components.SharedWorkspaceHeader
 import com.example.watcher.ui.components.SwipeCoachmarkOverlay
 import com.example.watcher.ui.components.VideoStreamSettingsDialog
@@ -128,6 +132,7 @@ fun MainScreen(
     val councilState by viewModel.councilState.collectAsStateWithLifecycle()
     val councilEntryUiState by viewModel.councilEntryUiState.collectAsStateWithLifecycle()
     val gatewayRunning by viewModel.gatewayRunning.collectAsStateWithLifecycle()
+    val appUpdatePrompt by viewModel.appUpdatePrompt.collectAsStateWithLifecycle()
 
     var monitorRequestText by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue())
@@ -170,7 +175,8 @@ fun MainScreen(
         settings = settings,
         isPlaying = isStreamPlaying,
         reconnectToken = streamReconnectToken,
-        onFrameUpdate = viewModel::updateVideoFrame
+        onFrameUpdate = viewModel::updateVideoFrame,
+        onStreamSourceChanged = viewModel::updateStreamSource
     )
 
     // Orientation detection — landscape triggers immersive live room
@@ -362,6 +368,38 @@ fun MainScreen(
         )
     }
 
+    appUpdatePrompt?.let { prompt ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissAppUpdatePrompt,
+            title = { Text("发现新版本") },
+            text = {
+                Text(
+                    "当前版本 ${prompt.currentVersion}\n最新版本 ${prompt.latestVersion}\n建议前往下载页更新安装包。"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val targetUrl = prompt.downloadUrl ?: prompt.downloadPageUrl
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl))
+                        runCatching { context.startActivity(intent) }
+                            .onFailure {
+                                Toast.makeText(context, "无法打开下载页面。", Toast.LENGTH_SHORT).show()
+                            }
+                        viewModel.dismissAppUpdatePrompt()
+                    }
+                ) {
+                    Text("立即更新")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissAppUpdatePrompt) {
+                    Text("稍后")
+                }
+            }
+        )
+    }
+
     val exitImmersiveRoom: () -> Unit = remember(context, stopCurrentImmersiveMode) {
         {
             immersiveSessionActive = false
@@ -457,8 +495,9 @@ fun MainScreen(
                         onAnalyze = { viewModel.analyzeIntent(monitorRequestText.text) },
                         onSaveTask = viewModel::saveCurrentTask,
                         onStartMonitoring = {
-                            viewModel.startMonitoring(it)
-                            navigateTo(HubPage.Hub)
+                            if (viewModel.startMonitoring(it)) {
+                                navigateTo(HubPage.Hub)
+                            }
                         },
                         onPauseMonitoring = viewModel::pauseMonitoring,
                         onResumeMonitoring = viewModel::resumeMonitoring,
@@ -513,6 +552,7 @@ fun MainScreen(
                         onNavigateDigitalLifeCard = {
                             viewModel.setStreamPlaying(false)
                             viewModel.updateVideoFrame(null)
+                            viewModel.updateStreamSource(StreamSource.None)
                             digitalLifeCardLauncher.launch(DigitalLifeCardActivity.createIntent(context))
                         },
                         onNavigateLiteRt = {
@@ -551,7 +591,7 @@ fun MainScreen(
                             )
                             navigateTo(HubPage.Hub)
                         },
-                        onStopProcessing = viewModel::requestStopVideoProcessing,
+                        onStopProcessing = viewModel::stopVideoProcessing,
                         onLoadTask = {
                             videoRequestText = TextFieldValue(it.userInput)
                             viewModel.loadVideoTask(it)

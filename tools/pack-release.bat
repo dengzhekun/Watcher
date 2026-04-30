@@ -2,27 +2,53 @@
 setlocal
 REM ============================================================
 REM  Watcher Release Packer
-REM  Builds release APK, injects the model, re-aligns and signs.
+REM  Builds release APK, re-aligns, signs, and generates update metadata.
 REM ============================================================
 
 set PROJECT_DIR=%~dp0..
-set MODEL_FILE=%PROJECT_DIR%\gemma-4-E2B-it.litertlm
+set VERSION_FILE=%PROJECT_DIR%\version.properties
 set BUILD_DIR=%PROJECT_DIR%\app\build\outputs\apk\release
 set APK_UNSIGNED=%BUILD_DIR%\app-release-unsigned.apk
-set APK_INJECTED=%BUILD_DIR%\app-release-injected.apk
 set APK_ALIGNED=%BUILD_DIR%\app-release-aligned.apk
-set APK_FINAL=%BUILD_DIR%\watcher-release.apk
+set WEBSITE_DOWNLOAD_PAGE=http://shokz-watcher.cn/download.html
+set WEBSITE_DOWNLOAD_APP_BASE=http://shokz-watcher.cn/download/app
+set METADATA_FILE=%BUILD_DIR%\latest.json
 
-REM Check model file exists
-if not exist "%MODEL_FILE%" (
-    echo ERROR: Model file not found: %MODEL_FILE%
-    echo Please place gemma-4-E2B-it.litertlm in the project root.
+REM Step 1: Bump release version explicitly
+echo [1/5] Bumping release version...
+cd /d "%PROJECT_DIR%"
+call gradlew.bat bumpReleaseVersion
+if %ERRORLEVEL% neq 0 (
+    echo Version bump failed!
     pause
     exit /b 1
 )
 
-REM Step 1: Build release APK
-echo [1/4] Building release APK...
+set VERSION_CODE=
+set VERSION_NAME_BASE=
+for /f "usebackq tokens=1,2 delims==" %%A in ("%VERSION_FILE%") do (
+    if /I "%%A"=="VERSION_CODE" set VERSION_CODE=%%B
+    if /I "%%A"=="VERSION_NAME_BASE" set VERSION_NAME_BASE=%%B
+)
+
+if "%VERSION_CODE%"=="" (
+    echo ERROR: VERSION_CODE not found in %VERSION_FILE%
+    pause
+    exit /b 1
+)
+if "%VERSION_NAME_BASE%"=="" (
+    echo ERROR: VERSION_NAME_BASE not found in %VERSION_FILE%
+    pause
+    exit /b 1
+)
+
+set VERSION_NAME=%VERSION_NAME_BASE%.%VERSION_CODE%
+set APK_VERSIONED_NAME=watcher-v%VERSION_NAME%-%VERSION_CODE%-release.apk
+set APK_FINAL=%BUILD_DIR%\%APK_VERSIONED_NAME%
+set APK_URL=%WEBSITE_DOWNLOAD_APP_BASE%/%APK_VERSIONED_NAME%
+
+REM Step 2: Build release APK
+echo [2/5] Building release APK...
 cd /d "%PROJECT_DIR%"
 call gradlew.bat assembleRelease
 if %ERRORLEVEL% neq 0 (
@@ -43,39 +69,18 @@ if exist "%BUILD_DIR%\app-release.apk" (
     exit /b 1
 )
 
-REM Step 2: Inject model into APK using jar (zip tool available in JDK)
-echo [2/4] Injecting model file (2.58 GB) into APK...
-copy /Y "%APK_SRC%" "%APK_INJECTED%" >nul
-
-REM Use 7z or jar to add the file. Try 7z first (faster for large files).
-where 7z >nul 2>nul
-if %ERRORLEVEL% equ 0 (
-    7z a -tzip -mx0 "%APK_INJECTED%" "%MODEL_FILE%" -spf2 >nul
-    REM Rename inside zip to assets/litert_models/gemma-4-E2B-it.litertlm
-    echo NOTE: Using 7z - model will be at root. App handles both locations.
-) else (
-    echo 7z not found. Using jar command...
-    REM Create temp directory structure
-    mkdir "%BUILD_DIR%\inject_tmp\assets\litert_models" 2>nul
-    copy /Y "%MODEL_FILE%" "%BUILD_DIR%\inject_tmp\assets\litert_models\" >nul
-    cd /d "%BUILD_DIR%\inject_tmp"
-    jar -uf "%APK_INJECTED%" assets\litert_models\gemma-4-E2B-it.litertlm
-    cd /d "%PROJECT_DIR%"
-    rmdir /s /q "%BUILD_DIR%\inject_tmp"
-)
-
 REM Step 3: Zipalign
-echo [3/4] Zipaligning...
+echo [3/5] Zipaligning...
 where zipalign >nul 2>nul
 if %ERRORLEVEL% equ 0 (
-    zipalign -f 4 "%APK_INJECTED%" "%APK_ALIGNED%"
+    zipalign -f 4 "%APK_SRC%" "%APK_ALIGNED%"
 ) else (
     echo WARNING: zipalign not found in PATH. Skipping alignment.
-    copy /Y "%APK_INJECTED%" "%APK_ALIGNED%" >nul
+    copy /Y "%APK_SRC%" "%APK_ALIGNED%" >nul
 )
 
 REM Step 4: Sign with debug key (for testing)
-echo [4/4] Signing with debug key...
+echo [4/5] Signing with debug key...
 where apksigner >nul 2>nul
 if %ERRORLEVEL% equ 0 (
     apksigner sign --ks "%USERPROFILE%\.android\debug.keystore" --ks-pass pass:android --key-alias androiddebugkey --key-pass pass:android --out "%APK_FINAL%" "%APK_ALIGNED%"
@@ -85,12 +90,30 @@ if %ERRORLEVEL% equ 0 (
     jarsigner -keystore "%USERPROFILE%\.android\debug.keystore" -storepass android -keypass android "%APK_FINAL%" androiddebugkey
 )
 
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "(Get-Date).ToString('yyyy-MM-ddTHH:mm:ssK')"`) do set UPDATED_AT=%%I
+
+echo [5/5] Generating update metadata...
+> "%METADATA_FILE%" (
+    echo {
+    echo   "version": "%VERSION_NAME%",
+    echo   "versionCode": %VERSION_CODE%,
+    echo   "apkUrl": "%APK_URL%",
+    echo   "updatedAt": "%UPDATED_AT%"
+    echo }
+)
+
 echo.
 echo ============================================================
-echo   SUCCESS! Release APK with bundled model:
+echo   SUCCESS! Release APK:
 echo   %APK_FINAL%
-echo   Size: ~2.7 GB
+echo   Update metadata:
+echo   %METADATA_FILE%
 echo ============================================================
+echo.
+echo Upload order:
+echo   1. Upload "%APK_FINAL%" to %WEBSITE_DOWNLOAD_APP_BASE%
+echo   2. Upload "%METADATA_FILE%" to %WEBSITE_DOWNLOAD_APP_BASE%/latest.json
+echo   3. Keep %WEBSITE_DOWNLOAD_PAGE% reachable for the in-app update button
 echo.
 echo To install on device:
 echo   adb install -r "%APK_FINAL%"

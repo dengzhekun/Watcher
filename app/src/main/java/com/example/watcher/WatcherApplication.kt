@@ -15,16 +15,17 @@ import com.example.watcher.data.local.litert.CompositeAgentBrainConnectionTester
 import com.example.watcher.data.local.litert.LITERT_BRAIN_FACTORY_ID
 import com.example.watcher.data.local.litert.LiteRtAgentBrainFactory
 import com.example.watcher.data.local.litert.LiteRtAssetInstaller
-import com.example.watcher.data.local.litert.LiteRtBackendType
 import com.example.watcher.data.local.litert.LiteRtConfigStore
 import com.example.watcher.data.local.litert.LiteRtModelDownloader
+import com.example.watcher.data.local.litert.LiteRtModelLocator
 import com.example.watcher.data.local.litert.LiteRtConnectionTester
 import com.example.watcher.data.local.litert.LiteRtEngineManager
 import com.example.watcher.data.local.litert.LiteRtLlmProvider
-import com.example.watcher.data.local.litert.LiteRtModelConfig
 import com.example.watcher.data.repository.LlmWalletRepository
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 class WatcherApplication : Application() {
@@ -32,23 +33,24 @@ class WatcherApplication : Application() {
         AgentFrameworkContainer(this)
     }
 
+    private val appScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO +
+        CoroutineExceptionHandler { _, t ->
+            Log.e("WatcherApplication", "Application init failed", t)
+        }
+    )
+
     override fun onCreate() {
         super.onCreate()
-        CoroutineScope(Dispatchers.IO).launch {
-            // Install bundled model from assets on first launch
+        appScope.launch {
             val container = agentFrameworkContainer
-            val installedPath = container.liteRtAssetInstaller.installBundledModelIfNeeded()
+            container.liteRtAssetInstaller.installBundledModelIfNeeded()
+            val savedConfig = container.liteRtConfigStore.loadConfig()
+            val config = container.liteRtModelLocator.resolveConfig(savedConfig)
 
-            // Determine config: saved config or auto-config from bundled model
-            val config = container.liteRtConfigStore.loadConfig()
-                ?: installedPath?.let {
-                    LiteRtModelConfig(
-                        modelPath = it,
-                        displayName = "Gemma 4 E2B",
-                        backend = LiteRtBackendType.GPU,
-                        visionBackend = LiteRtBackendType.GPU
-                    ).also { cfg -> container.liteRtConfigStore.saveConfig(cfg) }
-                }
+            if (config != null && config != savedConfig) {
+                container.liteRtConfigStore.saveConfig(config)
+            }
 
             if (config != null) {
                 runCatching {
@@ -56,6 +58,8 @@ class WatcherApplication : Application() {
                 }.onFailure { e ->
                     Log.w("WatcherApplication", "LiteRT auto-init failed: ${e.message}")
                 }
+            } else if (savedConfig != null) {
+                Log.i("WatcherApplication", "Saved LiteRT model path is unavailable; waiting for user action")
             }
         }
     }
@@ -77,6 +81,7 @@ class AgentFrameworkContainer(
     }
 
     // LiteRT-LM on-device inference
+    val liteRtModelLocator: LiteRtModelLocator by lazy { LiteRtModelLocator(application) }
     val liteRtAssetInstaller: LiteRtAssetInstaller by lazy { LiteRtAssetInstaller(application) }
     val liteRtModelDownloader: LiteRtModelDownloader by lazy { LiteRtModelDownloader(application) }
     val liteRtConfigStore: LiteRtConfigStore by lazy { LiteRtConfigStore(application) }

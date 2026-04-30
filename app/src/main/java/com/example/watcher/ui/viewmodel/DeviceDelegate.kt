@@ -9,6 +9,7 @@ import com.example.watcher.data.model.StreamScanUiState
 import com.example.watcher.data.model.VideoStreamSettings
 import com.example.watcher.data.repository.DeviceProvisionCoordinator
 import com.example.watcher.data.repository.LanStreamScanner
+import com.example.watcher.data.repository.ProvisionRediscoveryMode
 import com.example.watcher.data.repository.StreamDeviceCoordinator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -233,9 +234,10 @@ internal class DeviceDelegate(
         delay(PROVISIONING_RESTART_GRACE_PERIOD_MS)
         _deviceProvisionUiState.value = _deviceProvisionUiState.value.copy(
             isWaitingForReconnect = false, isFindingProvisionedDevice = true,
-            statusMessage = "The device is restarting. Switch the phone back to the same LAN and the app will find its new IP automatically.",
+            statusMessage = "The device is restarting. Looking for its new IP automatically...",
             errorMessage = null
         )
+        var lastRediscoveryMode = ProvisionRediscoveryMode.NoCandidateLan
         val outcome = withTimeoutOrNull(PROVISIONING_REDISCOVERY_TIMEOUT_MS) {
             while (true) {
                 val currentSettings = settingsDao.getSettingsSync() ?: VideoStreamSettings()
@@ -251,9 +253,11 @@ internal class DeviceDelegate(
                     )
                 }
                 val knownMdnsUrl = _deviceProvisionUiState.value.deviceInfo?.mdnsUrl
-                val found = lanStreamScanner.rediscoverProvisionedDevice(
+                val rediscovery = lanStreamScanner.rediscoverProvisionedDevice(
                     settings = currentSettings, expectedDeviceId = expectedDeviceId, knownMdnsUrl = knownMdnsUrl
                 )
+                lastRediscoveryMode = rediscovery.mode
+                val found = rediscovery.discoveredDevice
                 if (found != null) {
                     val refreshedInfo = runCatching { DeviceProvisionCoordinator(found.toBaseUrl()).fetchDeviceInfo() }.getOrNull()
                     when {
@@ -263,7 +267,7 @@ internal class DeviceDelegate(
                     }
                 }
                 _deviceProvisionUiState.value = _deviceProvisionUiState.value.copy(
-                    statusMessage = "Waiting for the phone to return to the target LAN, then searching for the device's new IP..."
+                    statusMessage = buildProvisionRediscoveryStatusMessage(lastRediscoveryMode)
                 )
                 delay(PROVISIONING_REDISCOVERY_RETRY_MS)
             }
@@ -281,7 +285,7 @@ internal class DeviceDelegate(
         if (discoveredDevice == null) {
             _deviceProvisionUiState.value = _deviceProvisionUiState.value.copy(
                 isFindingProvisionedDevice = false,
-                errorMessage = "Wi-Fi was sent to the device, but its new IP was not found yet. Reconnect the phone to the target LAN and try reading device status again.",
+                errorMessage = buildProvisionRediscoveryTimeoutMessage(lastRediscoveryMode),
                 statusMessage = null
             )
             return
@@ -359,6 +363,28 @@ private fun buildProvisionFailureMessage(info: DeviceRuntimeInfo): String = when
     "wifi_unsupported_ssid_length" -> "Wi-Fi was saved, but the device fell back to hotspot mode because the chip/driver does not support this SSID length (${info.wifiSsidBytes} bytes)."
     "wifi_connect_failed" -> "Wi-Fi was saved, but the device could not connect and fell back to hotspot mode. Disconnect reason: ${info.wifiDisconnectReason}."
     else -> "Wi-Fi was saved, but the device fell back to hotspot mode. Result: ${info.wifiConnectResult.ifBlank { "unknown" }}."
+}
+
+private fun buildProvisionRediscoveryStatusMessage(mode: ProvisionRediscoveryMode): String = when (mode) {
+    ProvisionRediscoveryMode.NoCandidateLan ->
+        "Waiting for a reachable LAN or hotspot subnet, then searching for the device's new IP..."
+    ProvisionRediscoveryMode.SearchingKnownLan ->
+        "Trying the device's previous IP and mDNS address first..."
+    ProvisionRediscoveryMode.SearchingActiveLan ->
+        "Searching the current LAN for the device's new IP..."
+    ProvisionRediscoveryMode.SearchingHotspotSubnet ->
+        "The device is joining the phone hotspot. Searching the hotspot subnet for its new IP..."
+    ProvisionRediscoveryMode.SearchingOtherLan ->
+        "Searching local private subnets for the device's new IP..."
+}
+
+private fun buildProvisionRediscoveryTimeoutMessage(mode: ProvisionRediscoveryMode): String = when (mode) {
+    ProvisionRediscoveryMode.NoCandidateLan ->
+        "Wi-Fi was sent to the device, but the app could not find any reachable LAN or hotspot subnet yet. Reconnect the phone to the target network or keep the hotspot enabled, then try reading device status again."
+    ProvisionRediscoveryMode.SearchingHotspotSubnet ->
+        "Wi-Fi was sent to the device, but its new IP was not found on the phone hotspot yet. Keep the hotspot enabled and try reading device status again in a moment."
+    else ->
+        "Wi-Fi was sent to the device, but its new IP was not found yet. Reconnect the phone to the target LAN and try reading device status again."
 }
 
 private fun DeviceRuntimeInfo.isProvisioningFailureFallback(): Boolean =

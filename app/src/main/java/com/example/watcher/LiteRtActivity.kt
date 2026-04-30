@@ -59,6 +59,7 @@ private fun LiteRtRoute(onClose: () -> Unit) {
         isModelDownloaded = viewModel.isModelDownloaded(),
         onLoadEngine = viewModel::loadEngine,
         onUnloadEngine = viewModel::unloadEngine,
+        onScanForModel = viewModel::scanExistingModel,
         onSendMessage = viewModel::sendMessage,
         onAttachImage = viewModel::attachImage,
         onClearAttachment = viewModel::clearAttachment,
