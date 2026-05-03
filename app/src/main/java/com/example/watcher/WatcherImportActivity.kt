@@ -1,6 +1,7 @@
 package com.example.watcher
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -62,6 +63,34 @@ class WatcherImportActivity : ComponentActivity() {
             provider = provider,
             makeDefault = plan.request.makeDefault
         )
+        persistImportState(plan)
         return WatcherExternalImportContract.buildSuccessResult(plan)
+    }
+
+    private fun persistImportState(plan: WatcherExternalImportPlan) {
+        val prefs = getSharedPreferences(
+            WatcherExternalImportContract.IMPORT_STATE_PREFS,
+            Context.MODE_PRIVATE
+        )
+        val editor = prefs.edit()
+        if (plan.agentConfig != null) {
+            editor.putString(
+                WatcherExternalImportContract.IMPORT_STATE_AGENT,
+                com.google.gson.Gson().toJson(plan.agentConfig)
+            )
+        }
+        if (plan.audienceConfig != null) {
+            editor.putString(
+                WatcherExternalImportContract.IMPORT_STATE_AUDIENCE,
+                com.google.gson.Gson().toJson(plan.audienceConfig)
+            )
+        }
+        if (plan.expertCouncilConfig != null) {
+            editor.putString(
+                WatcherExternalImportContract.IMPORT_STATE_EXPERT_COUNCIL,
+                com.google.gson.Gson().toJson(plan.expertCouncilConfig)
+            )
+        }
+        editor.apply()
     }
 }

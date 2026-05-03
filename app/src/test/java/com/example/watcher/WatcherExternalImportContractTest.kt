@@ -1,6 +1,7 @@
 package com.example.watcher
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -36,7 +37,7 @@ class WatcherExternalImportContractTest {
     }
 
     @Test
-    fun `parse import payload records unsupported sections and insecure tls warning`() {
+    fun `parse import payload captures extension sections and insecure tls warning`() {
         val plan = WatcherExternalImportContract.parseImportPayload(
             """
             {
@@ -46,17 +47,37 @@ class WatcherExternalImportContractTest {
               "apiKey": "sk-test",
               "modelName": "gpt-5.5",
               "allowInsecureTls": true,
-              "agentConfig": {"agentId": "watcher_agent"},
-              "audienceConfig": {"enabled": true},
-              "expertCouncilConfig": {"enabled": true}
+              "agentConfig": {
+                "enabled": true,
+                "agentId": "watcher_agent",
+                "agentName": "Watcher Agent",
+                "systemPrompt": "接住任务",
+                "entryPoint": "watcher://agent/main"
+              },
+              "audienceConfig": {
+                "enabled": true,
+                "roomName": "观察席",
+                "focusPrompt": "关注风险",
+                "responseStyle": "短句"
+              },
+              "expertCouncilConfig": {
+                "enabled": true,
+                "topic": "联调复盘",
+                "memberRoles": ["产品", "技术"],
+                "workflow": "先分歧后结论"
+              }
             }
             """.trimIndent()
         )
 
-        assertEquals(
-            listOf("agentConfig", "audienceConfig", "expertCouncilConfig"),
-            plan.ignoredSections
-        )
+        checkNotNull(plan.agentConfig)
+        checkNotNull(plan.audienceConfig)
+        checkNotNull(plan.expertCouncilConfig)
+        assertEquals("watcher_agent", plan.agentConfig.agentId)
+        assertEquals("X-MAX 主站", plan.request.providerName)
+        assertEquals("观察席", plan.audienceConfig.roomName)
+        assertEquals(listOf("产品", "技术"), plan.expertCouncilConfig.memberRoles)
+        assertTrue(plan.ignoredSections.isEmpty())
         assertTrue(plan.warnings.any { it.contains("allowInsecureTls") })
         assertTrue(plan.warnings.any { it.contains("agentConfig") })
         assertTrue(plan.warnings.any { it.contains("audienceConfig") })
@@ -96,7 +117,12 @@ class WatcherExternalImportContractTest {
               "endpoint": "https://api.example.com/v1",
               "apiKey": "sk-test",
               "modelName": "gpt-5.5",
-              "audienceConfig": {"enabled": true}
+              "audienceConfig": {
+                "enabled": true,
+                "roomName": "观察席",
+                "focusPrompt": "关注风险",
+                "responseStyle": "短句"
+              }
             }
             """.trimIndent()
         )
@@ -104,9 +130,36 @@ class WatcherExternalImportContractTest {
         val result = WatcherExternalImportContract.buildSuccessResult(plan)
 
         assertEquals("partial_success", result.status)
-        assertEquals(listOf("provider"), result.imported)
-        assertEquals(listOf("audienceConfig"), result.ignored)
+        assertEquals(listOf("provider", "audienceConfig"), result.imported)
+        assertTrue(result.ignored.isEmpty())
         assertTrue(result.message.contains("导入成功"))
         assertTrue(result.resultPayloadJson.contains("\"status\":\"partial_success\""))
+    }
+
+    @Test
+    fun `parse import payload rejects invalid extension section`() {
+        val error = runCatching {
+            WatcherExternalImportContract.parseImportPayload(
+                """
+                {
+                  "providerId": "xmax_main_chat",
+                  "providerName": "X-MAX 主站",
+                  "endpoint": "https://api.example.com/v1",
+                  "apiKey": "sk-test",
+                  "modelName": "gpt-5.5",
+                  "agentConfig": {
+                    "enabled": true,
+                    "agentId": "",
+                    "agentName": "Agent",
+                    "systemPrompt": "prompt"
+                  }
+                }
+                """.trimIndent()
+            )
+        }.exceptionOrNull()
+
+        checkNotNull(error)
+        assertFalse(error.message.isNullOrBlank())
+        assertTrue(error.message!!.contains("agentConfig"))
     }
 }
