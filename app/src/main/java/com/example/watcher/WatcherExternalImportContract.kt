@@ -60,6 +60,36 @@ data class WatcherExternalImportSuccessResult(
     val resultPayloadJson: String
 )
 
+data class WatcherProviderImportState(
+    val providerId: String,
+    val providerName: String,
+    val endpoint: String,
+    val modelName: String,
+    val enabled: Boolean,
+    val makeDefault: Boolean,
+    val sourceSiteName: String,
+    val sourceModelMode: String,
+    val importedAt: Long
+)
+
+data class WatcherXmaxImportStatusSection(
+    val title: String,
+    val imported: Boolean,
+    val enabled: Boolean,
+    val summary: String,
+    val source: String,
+    val lastImportedAt: Long?,
+    val nextStep: String
+)
+
+data class WatcherXmaxImportStatus(
+    val hasImportedPayload: Boolean = false,
+    val sourceLabel: String = "尚未导入",
+    val lastImportedAt: Long? = null,
+    val sections: List<WatcherXmaxImportStatusSection> = emptyList(),
+    val nextStepHint: String = "从 XMAX 发起一次导入后，这里会显示 Provider、Agent、AI 观众和专家团的接入状态。"
+)
+
 object WatcherExternalImportContract {
     const val ACTION_OPEN_WALLET = "com.xmax.watcher.action.OPEN_WALLET"
     const val ACTION_OPEN_WALLET_LEGACY = "com.example.watcher.action.OPEN_WALLET"
@@ -71,6 +101,7 @@ object WatcherExternalImportContract {
     const val EXTRA_GENERIC_RESULT_MESSAGE = "com.xmax.external.extra.RESULT_MESSAGE"
     const val EXTRA_GENERIC_RESULT_PAYLOAD = "com.xmax.external.extra.RESULT_PAYLOAD"
     const val IMPORT_STATE_PREFS = "watcher_external_import_state"
+    const val IMPORT_STATE_PROVIDER = "provider_import_state_json"
     const val IMPORT_STATE_AGENT = "agent_config_json"
     const val IMPORT_STATE_AUDIENCE = "audience_config_json"
     const val IMPORT_STATE_EXPERT_COUNCIL = "expert_council_config_json"
@@ -177,9 +208,145 @@ object WatcherExternalImportContract {
         )
     }
 
+    fun buildProviderImportStateJson(
+        plan: WatcherExternalImportPlan,
+        importedAt: Long = System.currentTimeMillis()
+    ): String {
+        return gson.toJson(
+            WatcherProviderImportState(
+                providerId = plan.request.providerId,
+                providerName = plan.request.providerName,
+                endpoint = plan.request.endpoint,
+                modelName = plan.request.modelName,
+                enabled = plan.request.enabled,
+                makeDefault = plan.request.makeDefault,
+                sourceSiteName = plan.request.sourceSiteName,
+                sourceModelMode = plan.request.sourceModelMode,
+                importedAt = importedAt
+            )
+        )
+    }
+
+    fun buildImportStatus(
+        providers: List<LlmProviderEntity>,
+        defaultProviderId: String?,
+        providerStateJson: String?,
+        agentConfigJson: String?,
+        audienceConfigJson: String?,
+        expertCouncilConfigJson: String?
+    ): WatcherXmaxImportStatus {
+        val providerState = providerStateJson.decodeJsonOrNull<WatcherProviderImportState>()
+        val agentConfig = agentConfigJson.decodeJsonOrNull<WatcherAgentConfigImport>()
+        val audienceConfig = audienceConfigJson.decodeJsonOrNull<WatcherAudienceConfigImport>()
+        val expertCouncilConfig = expertCouncilConfigJson.decodeJsonOrNull<WatcherExpertCouncilConfigImport>()
+        val hasImportedPayload = providerState != null ||
+            agentConfig != null ||
+            audienceConfig != null ||
+            expertCouncilConfig != null
+
+        if (!hasImportedPayload) {
+            return WatcherXmaxImportStatus()
+        }
+
+        val matchingProvider = providerState
+            ?.let { state -> providers.firstOrNull { it.id == state.providerId } }
+        val sourceLabel = providerState.sourceLabel()
+        val lastImportedAt = providerState?.importedAt ?: matchingProvider?.updatedAt
+        val sections = buildList {
+            add(
+                buildProviderStatusSection(
+                    provider = matchingProvider,
+                    providerState = providerState,
+                    defaultProviderId = defaultProviderId,
+                    sourceLabel = sourceLabel,
+                    lastImportedAt = lastImportedAt
+                )
+            )
+            add(
+                agentConfig.toStatusSection(
+                    title = "Agent",
+                    summary = { it.agentName.ifBlank { it.agentId.ifBlank { "已暂存 Agent 配置" } } },
+                    sourceLabel = sourceLabel,
+                    lastImportedAt = lastImportedAt,
+                    missingStep = "从 XMAX 重新导入 Agent 配置。",
+                    importedStep = "下一步：在 Agent 配置页接入并启用该 Agent。"
+                )
+            )
+            add(
+                audienceConfig.toStatusSection(
+                    title = "AI 观众",
+                    summary = { it.roomName.ifBlank { "已暂存 AI 观众配置" } },
+                    sourceLabel = sourceLabel,
+                    lastImportedAt = lastImportedAt,
+                    missingStep = "从 XMAX 重新导入 AI 观众配置。",
+                    importedStep = "下一步：在直播间观众管理里接入这组观众。"
+                )
+            )
+            add(
+                expertCouncilConfig.toStatusSection(
+                    title = "专家团",
+                    summary = {
+                        it.topic.ifBlank {
+                            it.memberRoles.joinToString("、").ifBlank { "已暂存专家团配置" }
+                        }
+                    },
+                    sourceLabel = sourceLabel,
+                    lastImportedAt = lastImportedAt,
+                    missingStep = "从 XMAX 重新导入专家团配置。",
+                    importedStep = "下一步：在 Council 模式中接入专家角色与工作流。"
+                )
+            )
+        }
+        val nextStepHint = when {
+            matchingProvider == null -> "Provider 已收到但未在钱包中找到，请从 XMAX 重新导入或手动补齐供应商。"
+            !matchingProvider.enabled -> "Provider 当前已禁用；启用后再测试连通性。"
+            matchingProvider.id == defaultProviderId -> "Provider 已作为默认钱包；下一步建议测试连通性。"
+            else -> "Provider 已保存；下一步建议设为默认并测试连通性。"
+        }
+
+        return WatcherXmaxImportStatus(
+            hasImportedPayload = true,
+            sourceLabel = sourceLabel,
+            lastImportedAt = lastImportedAt,
+            sections = sections,
+            nextStepHint = nextStepHint
+        )
+    }
+
     fun buildFailureMessage(error: Throwable): String {
         val detail = error.message?.trim().orEmpty().ifBlank { "未知错误" }
         return "导入失败：$detail"
+    }
+
+    private fun buildProviderStatusSection(
+        provider: LlmProviderEntity?,
+        providerState: WatcherProviderImportState?,
+        defaultProviderId: String?,
+        sourceLabel: String,
+        lastImportedAt: Long?
+    ): WatcherXmaxImportStatusSection {
+        val imported = providerState != null || provider != null
+        val enabled = provider?.enabled ?: providerState?.enabled ?: false
+        val summary = when {
+            provider != null -> "${provider.name} · ${provider.modelName}"
+            providerState != null -> "${providerState.providerName} · ${providerState.modelName}"
+            else -> "尚未导入 Provider"
+        }
+        val nextStep = when {
+            provider == null -> "从 XMAX 重新导入或手动创建 Provider。"
+            !provider.enabled -> "启用 Provider 后再测试连通性。"
+            provider.id == defaultProviderId -> "在下方供应商卡片执行连通性测试。"
+            else -> "设为默认后执行连通性测试。"
+        }
+        return WatcherXmaxImportStatusSection(
+            title = "Provider",
+            imported = imported,
+            enabled = enabled,
+            summary = summary,
+            source = sourceLabel,
+            lastImportedAt = lastImportedAt,
+            nextStep = nextStep
+        )
     }
 
     private fun JsonObject.requireString(key: String): String {
@@ -253,5 +420,43 @@ object WatcherExternalImportContract {
         return mapNotNull { element ->
             runCatching { element.asString.trim() }.getOrNull()?.takeIf { it.isNotBlank() }
         }
+    }
+
+    private inline fun <reified T> String?.decodeJsonOrNull(): T? {
+        val raw = this?.takeIf { it.isNotBlank() } ?: return null
+        return runCatching { gson.fromJson(raw, T::class.java) }.getOrNull()
+    }
+
+    private fun WatcherProviderImportState?.sourceLabel(): String {
+        val parts = listOfNotNull(
+            this?.sourceSiteName?.takeIf { it.isNotBlank() },
+            this?.sourceModelMode?.takeIf { it.isNotBlank() }
+        )
+        return parts.joinToString(" / ").ifBlank { "XMAX 外部导入" }
+    }
+
+    private fun <T> T?.toStatusSection(
+        title: String,
+        summary: (T) -> String,
+        sourceLabel: String,
+        lastImportedAt: Long?,
+        missingStep: String,
+        importedStep: String
+    ): WatcherXmaxImportStatusSection where T : Any {
+        val enabled = when (this) {
+            is WatcherAgentConfigImport -> this.enabled
+            is WatcherAudienceConfigImport -> this.enabled
+            is WatcherExpertCouncilConfigImport -> this.enabled
+            else -> false
+        }
+        return WatcherXmaxImportStatusSection(
+            title = title,
+            imported = this != null,
+            enabled = this != null && enabled,
+            summary = this?.let(summary) ?: "尚未导入 $title",
+            source = sourceLabel,
+            lastImportedAt = if (this != null) lastImportedAt else null,
+            nextStep = if (this != null) importedStep else missingStep
+        )
     }
 }

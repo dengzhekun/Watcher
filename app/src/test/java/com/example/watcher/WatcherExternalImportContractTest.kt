@@ -162,4 +162,69 @@ class WatcherExternalImportContractTest {
         assertFalse(error.message.isNullOrBlank())
         assertTrue(error.message!!.contains("agentConfig"))
     }
+
+    @Test
+    fun `build import status summarizes provider and staged XMAX sections`() {
+        val plan = WatcherExternalImportContract.parseImportPayload(
+            """
+            {
+              "providerId": "xmax_main_chat",
+              "providerName": "X-MAX 主站",
+              "endpoint": "https://api.example.com/v1",
+              "apiKey": "sk-test",
+              "modelName": "gpt-5.5",
+              "sourceSiteName": "主站",
+              "sourceModelMode": "聊天模型",
+              "agentConfig": {
+                "enabled": true,
+                "agentId": "watcher_agent",
+                "agentName": "Watcher Agent",
+                "systemPrompt": "接住任务",
+                "entryPoint": "watcher://agent/main"
+              },
+              "audienceConfig": {
+                "enabled": false,
+                "roomName": "观察席",
+                "focusPrompt": "",
+                "responseStyle": "短句"
+              },
+              "expertCouncilConfig": {
+                "enabled": true,
+                "topic": "联调复盘",
+                "memberRoles": ["产品", "技术"],
+                "workflow": "先分歧后结论"
+              }
+            }
+            """.trimIndent()
+        )
+        val importedAt = 1_775_000_000_000L
+        val provider = WatcherExternalImportContract.toProviderEntity(
+            request = plan.request,
+            now = importedAt
+        )
+
+        val status = WatcherExternalImportContract.buildImportStatus(
+            providers = listOf(provider),
+            defaultProviderId = "xmax_main_chat",
+            providerStateJson = WatcherExternalImportContract.buildProviderImportStateJson(plan, importedAt),
+            agentConfigJson = requireNotNull(plan.agentConfig).let { com.google.gson.Gson().toJson(it) },
+            audienceConfigJson = requireNotNull(plan.audienceConfig).let { com.google.gson.Gson().toJson(it) },
+            expertCouncilConfigJson = requireNotNull(plan.expertCouncilConfig).let { com.google.gson.Gson().toJson(it) }
+        )
+
+        assertTrue(status.hasImportedPayload)
+        assertEquals("主站 / 聊天模型", status.sourceLabel)
+        assertEquals(importedAt, status.lastImportedAt)
+        assertEquals(4, status.sections.size)
+        assertEquals("Provider", status.sections[0].title)
+        assertTrue(status.sections[0].imported)
+        assertTrue(status.sections[0].enabled)
+        assertTrue(status.sections[0].summary.contains("X-MAX 主站"))
+        assertEquals("Agent", status.sections[1].title)
+        assertEquals("Watcher Agent", status.sections[1].summary)
+        assertEquals("AI 观众", status.sections[2].title)
+        assertFalse(status.sections[2].enabled)
+        assertEquals("专家团", status.sections[3].title)
+        assertTrue(status.nextStepHint.contains("测试"))
+    }
 }

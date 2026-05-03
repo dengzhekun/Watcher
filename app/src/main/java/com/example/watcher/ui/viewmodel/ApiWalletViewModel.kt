@@ -1,8 +1,11 @@
 package com.example.watcher.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.watcher.WatcherExternalImportContract
+import com.example.watcher.WatcherXmaxImportStatus
 import com.example.watcher.data.model.LlmProviderEntity
 import com.example.watcher.data.remote.ChatMessage
 import com.example.watcher.data.remote.OpenAiCompatibleProvider
@@ -71,7 +74,8 @@ data class ApiWalletUiState(
     val asrConfig: AsrConfigUiState = AsrConfigUiState(),
     val statusMessage: String? = null,
     val errorMessage: String? = null,
-    val arkFallbackAvailable: Boolean = false
+    val arkFallbackAvailable: Boolean = false,
+    val xmaxImportStatus: WatcherXmaxImportStatus = WatcherXmaxImportStatus()
 ) {
     val defaultProvider: LlmProviderEntity?
         get() = providers.firstOrNull { it.id == defaultProviderId }
@@ -445,6 +449,10 @@ class ApiWalletViewModel(application: Application) : AndroidViewModel(applicatio
     private fun observeProviders() {
         viewModelScope.launch {
             walletRepository.observeProviders().collect { providers ->
+                val defaultProviderId = resolveEffectiveDefaultId(
+                    providers = providers,
+                    storedDefaultId = walletRepository.getDefaultProviderId()
+                )
                 _uiState.value = _uiState.value.copy(
                     testingProviderId = null,
                     isLoading = false,
@@ -452,11 +460,12 @@ class ApiWalletViewModel(application: Application) : AndroidViewModel(applicatio
                     providerConnectivity = providers.associate { provider ->
                         provider.id to walletRepository.getProviderConnectivitySnapshot(provider.id)
                     },
-                    defaultProviderId = resolveEffectiveDefaultId(
+                    defaultProviderId = defaultProviderId,
+                    arkFallbackAvailable = ArkConfig.apiKey.isNotBlank(),
+                    xmaxImportStatus = buildXmaxImportStatus(
                         providers = providers,
-                        storedDefaultId = walletRepository.getDefaultProviderId()
-                    ),
-                    arkFallbackAvailable = ArkConfig.apiKey.isNotBlank()
+                        defaultProviderId = defaultProviderId
+                    )
                 )
             }
         }
@@ -508,6 +517,27 @@ class ApiWalletViewModel(application: Application) : AndroidViewModel(applicatio
             append("_")
             append(System.currentTimeMillis())
         }
+    }
+
+    private fun buildXmaxImportStatus(
+        providers: List<LlmProviderEntity>,
+        defaultProviderId: String?
+    ): WatcherXmaxImportStatus {
+        val prefs = getApplication<Application>().getSharedPreferences(
+            WatcherExternalImportContract.IMPORT_STATE_PREFS,
+            Context.MODE_PRIVATE
+        )
+        return WatcherExternalImportContract.buildImportStatus(
+            providers = providers,
+            defaultProviderId = defaultProviderId,
+            providerStateJson = prefs.getString(WatcherExternalImportContract.IMPORT_STATE_PROVIDER, null),
+            agentConfigJson = prefs.getString(WatcherExternalImportContract.IMPORT_STATE_AGENT, null),
+            audienceConfigJson = prefs.getString(WatcherExternalImportContract.IMPORT_STATE_AUDIENCE, null),
+            expertCouncilConfigJson = prefs.getString(
+                WatcherExternalImportContract.IMPORT_STATE_EXPERT_COUNCIL,
+                null
+            )
+        )
     }
 }
 

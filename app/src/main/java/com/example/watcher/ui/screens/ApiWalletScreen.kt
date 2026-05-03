@@ -92,6 +92,10 @@ fun ApiWalletScreen(
             }
 
             item {
+                ExternalImportStatusCard(uiState.xmaxImportStatus)
+            }
+
+            item {
                 ProviderEditorSection(
                     uiState = uiState,
                     onStartCreate = onStartCreate,

@@ -1,7 +1,9 @@
 package com.example.watcher.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
@@ -15,8 +17,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.example.watcher.WatcherXmaxImportStatus
+import com.example.watcher.WatcherXmaxImportStatusSection
 import com.example.watcher.ui.viewmodel.ApiWalletUiState
 
 @Composable
@@ -91,6 +97,132 @@ internal fun WalletSummaryCard(uiState: ApiWalletUiState) {
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+internal fun ExternalImportStatusCard(status: WatcherXmaxImportStatus) {
+    val accent = if (status.hasImportedPayload) Color(0xFF18794E) else Color(0xFF9A6700)
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.22f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text(
+                        text = "XMAX 外部导入状态",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = status.sourceLabel,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = status.lastImportedAt?.let { "最后导入 ${formatDateTime(it)}" }
+                            ?: "尚未收到导入记录",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                SummaryBadge(
+                    text = if (status.hasImportedPayload) "已接收" else "待导入",
+                    highlighted = status.hasImportedPayload
+                )
+            }
+
+            Text(
+                text = status.nextStepHint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            status.sections.forEach { section ->
+                ExternalImportSectionRow(section)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExternalImportSectionRow(section: WatcherXmaxImportStatusSection) {
+    val label = when {
+        !section.imported -> "未导入"
+        section.enabled -> "已启用"
+        else -> "已禁用"
+    }
+    val accent = when {
+        !section.imported -> MaterialTheme.colorScheme.onSurfaceVariant
+        section.enabled -> Color(0xFF18794E)
+        else -> Color(0xFF9A6700)
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Text(
+                    text = section.title,
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Text(
+                    text = section.summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = section.lastImportedAt?.let {
+                        "来源 ${section.source} · ${formatDateTime(it)}"
+                    } ?: "来源 ${section.source}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = section.nextStep,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = accent.copy(alpha = 0.12f)
+            ) {
+                Text(
+                    text = label,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = accent
+                )
+            }
+        }
     }
 }
 

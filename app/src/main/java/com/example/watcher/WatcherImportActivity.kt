@@ -72,7 +72,12 @@ class WatcherImportActivity : ComponentActivity() {
             WatcherExternalImportContract.IMPORT_STATE_PREFS,
             Context.MODE_PRIVATE
         )
+        val importedAt = System.currentTimeMillis()
         val editor = prefs.edit()
+            .putString(
+                WatcherExternalImportContract.IMPORT_STATE_PROVIDER,
+                WatcherExternalImportContract.buildProviderImportStateJson(plan, importedAt)
+            )
         if (plan.agentConfig != null) {
             editor.putString(
                 WatcherExternalImportContract.IMPORT_STATE_AGENT,
