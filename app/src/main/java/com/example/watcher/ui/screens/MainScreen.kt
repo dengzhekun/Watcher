@@ -128,6 +128,7 @@ internal fun MainScreen(
     val aiAudienceState by viewModel.aiAudienceLiveState.collectAsStateWithLifecycle()
     val llmProviders by viewModel.llmProvidersFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val aiAudiences by viewModel.aiAudiencesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val pendingHiddenWorkbenchImports by viewModel.pendingHiddenWorkbenchImports.collectAsStateWithLifecycle()
     val liveSpeechState by viewModel.liveSpeechState.collectAsStateWithLifecycle()
     val interactionMode by viewModel.interactionMode.collectAsStateWithLifecycle()
     val councilState by viewModel.councilState.collectAsStateWithLifecycle()
@@ -637,6 +638,8 @@ internal fun MainScreen(
                         councilExperts = councilExperts,
                         providers = llmProviders,
                         audiences = aiAudiences,
+                        pendingAudienceImport = pendingHiddenWorkbenchImports.audienceImport,
+                        pendingCouncilImport = pendingHiddenWorkbenchImports.councilImport,
                         onUpdateMonitorTemplate = viewModel::updateMonitorTemplate,
                         onUpdateVideoTemplate = viewModel::updateVideoTemplate,
                         onUpdateCouncilTemplate = viewModel::updateCouncilTemplate,
@@ -659,6 +662,8 @@ internal fun MainScreen(
                         onDeleteProvider = viewModel::deleteProvider,
                         onSaveAudience = viewModel::saveAudience,
                         onDeleteAudience = viewModel::deleteAudience,
+                        onApplyPendingAudienceImport = viewModel::applyPendingAudienceImport,
+                        onApplyPendingCouncilImport = viewModel::applyPendingCouncilImport,
                         getLastPost = viewModel::getAudienceLastPost,
                         getLastResponse = viewModel::getAudienceLastResponse,
                         getAgentDebugSnapshot = viewModel::getAgentAudienceDebugSnapshot,

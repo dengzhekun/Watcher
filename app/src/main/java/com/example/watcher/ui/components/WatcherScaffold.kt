@@ -76,7 +76,7 @@ internal fun PageScaffold(
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 112.dp),
+                .padding(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 228.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
             content = content
         )

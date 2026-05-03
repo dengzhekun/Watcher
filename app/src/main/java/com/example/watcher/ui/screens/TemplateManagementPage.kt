@@ -10,6 +10,8 @@ import com.example.watcher.data.model.LlmProviderEntity
 import com.example.watcher.data.model.MemorySnapshot
 import com.example.watcher.data.model.MonitorTemplateEntity
 import com.example.watcher.data.model.VideoTemplateEntity
+import com.example.watcher.data.repository.PendingAudienceImport
+import com.example.watcher.data.repository.PendingCouncilImport
 import com.example.watcher.ui.components.MotionDepth
 import com.example.watcher.ui.components.MotionStageSection
 import com.example.watcher.ui.components.PageScaffold
@@ -23,6 +25,8 @@ internal fun TemplateManagementPage(
     councilExperts: List<CouncilExpertEntity>,
     providers: List<LlmProviderEntity>,
     audiences: List<AiAudienceEntity>,
+    pendingAudienceImport: PendingAudienceImport?,
+    pendingCouncilImport: PendingCouncilImport?,
     onUpdateMonitorTemplate: (MonitorTemplateEntity) -> Unit,
     onUpdateVideoTemplate: (VideoTemplateEntity) -> Unit,
     onUpdateCouncilTemplate: (CouncilTemplateEntity) -> Unit,
@@ -45,6 +49,8 @@ internal fun TemplateManagementPage(
     onDeleteProvider: (String) -> Unit,
     onSaveAudience: (AiAudienceEntity) -> Unit,
     onDeleteAudience: (Long) -> Unit,
+    onApplyPendingAudienceImport: ((String) -> Unit) -> Unit,
+    onApplyPendingCouncilImport: ((String) -> Unit) -> Unit,
     getLastPost: (Long) -> String?,
     getLastResponse: (Long) -> String?,
     getAgentDebugSnapshot: (AiAudienceEntity) -> AgentAudienceDebugSnapshot?,
@@ -88,6 +94,16 @@ internal fun TemplateManagementPage(
 
         MotionStageSection(pageOffset = pageOffset, depth = MotionDepth.Support) {
             TemplateImportCard(onImport = onImportTemplate)
+        }
+
+        MotionStageSection(pageOffset = pageOffset, depth = MotionDepth.Support) {
+            PendingHiddenWorkbenchImportsCard(
+                pendingAudienceImport = pendingAudienceImport,
+                pendingCouncilImport = pendingCouncilImport,
+                providers = providers,
+                onApplyAudienceImport = onApplyPendingAudienceImport,
+                onApplyCouncilImport = onApplyPendingCouncilImport
+            )
         }
 
         MotionStageSection(pageOffset = pageOffset, depth = MotionDepth.Support) {
