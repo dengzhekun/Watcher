@@ -22,7 +22,8 @@ data class ImportedResourceInput(
     val applied: Boolean,
     val requiresManualAction: Boolean,
     val failedMessage: String?,
-    val destination: ImportActionTarget
+    val destination: ImportActionTarget,
+    val detailLines: List<String> = emptyList()
 )
 
 data class ImportedResourceBatch(

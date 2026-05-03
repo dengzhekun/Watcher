@@ -6,6 +6,10 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
+import com.example.watcher.data.repository.WatcherImportedAgentRegistrar
+import com.example.watcher.importworkbench.ImportWorkbenchRepository
+import com.example.watcher.importworkbench.buildWatcherImportBatch
+import com.google.gson.Gson
 import kotlinx.coroutines.launch
 
 class WatcherImportActivity : ComponentActivity() {
@@ -54,6 +58,9 @@ class WatcherImportActivity : ComponentActivity() {
             .watcherApplication()
             .agentFrameworkContainer
             .llmWalletRepository
+        val container = applicationContext
+            .watcherApplication()
+            .agentFrameworkContainer
         val existing = walletRepository.getProviderById(plan.request.providerId)
         val provider = WatcherExternalImportContract.toProviderEntity(
             request = plan.request,
@@ -63,39 +70,72 @@ class WatcherImportActivity : ComponentActivity() {
             provider = provider,
             makeDefault = plan.request.makeDefault
         )
-        persistImportState(plan)
-        return WatcherExternalImportContract.buildSuccessResult(plan)
+        val importedAt = System.currentTimeMillis()
+        val agentFailureMessage = plan.agentConfig
+            ?.takeIf { it.enabled }
+            ?.let { agentConfig ->
+                runCatching {
+                    container.service.registerAgent(
+                        WatcherImportedAgentRegistrar.buildRegistration(
+                            agentConfig = agentConfig,
+                            providerId = provider.id,
+                            sourceSiteName = plan.request.sourceSiteName,
+                            sourceModelMode = plan.request.sourceModelMode
+                        )
+                    )
+                }.exceptionOrNull()?.message
+            }
+        val agentApplied = plan.agentConfig?.enabled == true && agentFailureMessage == null
+
+        persistImportState(plan, importedAt)
+        ImportWorkbenchRepository.fromContext(applicationContext).saveBatch(
+            buildWatcherImportBatch(
+                plan = plan,
+                importedAt = importedAt,
+                agentApplied = agentApplied,
+                agentFailureMessage = agentFailureMessage
+            )
+        )
+
+        val effectivePlan = if (agentFailureMessage.isNullOrBlank()) {
+            plan
+        } else {
+            plan.copy(
+                warnings = plan.warnings + "agentConfig 自动注册失败：$agentFailureMessage"
+            )
+        }
+        return WatcherExternalImportContract.buildSuccessResult(effectivePlan)
     }
 
-    private fun persistImportState(plan: WatcherExternalImportPlan) {
+    private fun persistImportState(
+        plan: WatcherExternalImportPlan,
+        importedAt: Long
+    ) {
         val prefs = getSharedPreferences(
             WatcherExternalImportContract.IMPORT_STATE_PREFS,
             Context.MODE_PRIVATE
         )
-        val importedAt = System.currentTimeMillis()
         val editor = prefs.edit()
-            .putString(
-                WatcherExternalImportContract.IMPORT_STATE_PROVIDER,
-                WatcherExternalImportContract.buildProviderImportStateJson(plan, importedAt)
-            )
-        if (plan.agentConfig != null) {
-            editor.putString(
-                WatcherExternalImportContract.IMPORT_STATE_AGENT,
-                com.google.gson.Gson().toJson(plan.agentConfig)
-            )
-        }
-        if (plan.audienceConfig != null) {
-            editor.putString(
-                WatcherExternalImportContract.IMPORT_STATE_AUDIENCE,
-                com.google.gson.Gson().toJson(plan.audienceConfig)
-            )
-        }
-        if (plan.expertCouncilConfig != null) {
-            editor.putString(
-                WatcherExternalImportContract.IMPORT_STATE_EXPERT_COUNCIL,
-                com.google.gson.Gson().toJson(plan.expertCouncilConfig)
-            )
+        buildImportStateEntries(plan, importedAt).forEach { (key, value) ->
+            editor.putString(key, value)
         }
         editor.apply()
     }
+}
+
+internal fun buildImportStateEntries(
+    plan: WatcherExternalImportPlan,
+    importedAt: Long,
+    gson: Gson = Gson()
+): Map<String, String?> {
+    return linkedMapOf(
+        WatcherExternalImportContract.IMPORT_STATE_PROVIDER to
+            WatcherExternalImportContract.buildProviderImportStateJson(plan, importedAt),
+        WatcherExternalImportContract.IMPORT_STATE_AGENT to
+            plan.agentConfig?.let(gson::toJson),
+        WatcherExternalImportContract.IMPORT_STATE_AUDIENCE to
+            plan.audienceConfig?.let(gson::toJson),
+        WatcherExternalImportContract.IMPORT_STATE_EXPERT_COUNCIL to
+            plan.expertCouncilConfig?.let(gson::toJson)
+    )
 }

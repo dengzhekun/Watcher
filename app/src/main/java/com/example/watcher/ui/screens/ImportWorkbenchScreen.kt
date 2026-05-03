@@ -15,7 +15,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -37,7 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.example.watcher.ui.viewmodel.ImportResourceStatus
+import com.example.watcher.importworkbench.WorkbenchResourceState
 import com.example.watcher.ui.viewmodel.ImportWorkbenchResource
 import com.example.watcher.ui.viewmodel.ImportWorkbenchUiState
 
@@ -66,7 +65,7 @@ fun ImportWorkbenchScreen(
         modifier = Modifier.fillMaxSize(),
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("Import Workbench") },
+                title = { Text(uiState.title) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
@@ -143,9 +142,9 @@ private fun WorkbenchSummary(uiState: ImportWorkbenchUiState) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            StatusBadge("Imported ${uiState.importedCount}", ImportResourceStatus.Imported)
-            StatusBadge("Pending ${uiState.pendingCount}", ImportResourceStatus.Pending)
-            StatusBadge("Failed ${uiState.failedCount}", ImportResourceStatus.Failed)
+            StatusBadge("Applied ${uiState.importedCount}", WorkbenchResourceState.APPLIED)
+            StatusBadge("Pending ${uiState.pendingCount}", WorkbenchResourceState.NEEDS_MANUAL_ACTION)
+            StatusBadge("Failed ${uiState.failedCount}", WorkbenchResourceState.FAILED)
         }
     }
 }
@@ -184,7 +183,7 @@ private fun ImportResourceCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                StatusBadge(resource.status.name, resource.status)
+                StatusBadge(resource.statusDisplayLabel, resource.status)
             }
 
             Text(
@@ -237,13 +236,13 @@ private fun ImportResourceCard(
 @Composable
 private fun StatusBadge(
     text: String,
-    status: ImportResourceStatus
+    status: WorkbenchResourceState
 ) {
     val (container, content) = when (status) {
-        ImportResourceStatus.Imported -> Color(0xFF18794E).copy(alpha = 0.12f) to Color(0xFF18794E)
-        ImportResourceStatus.Pending -> Color(0xFF9A6700).copy(alpha = 0.12f) to Color(0xFF9A6700)
-        ImportResourceStatus.Failed -> Color(0xFFB42318).copy(alpha = 0.12f) to Color(0xFFB42318)
-        ImportResourceStatus.Disabled -> MaterialTheme.colorScheme.surface to MaterialTheme.colorScheme.onSurfaceVariant
+        WorkbenchResourceState.APPLIED -> Color(0xFF18794E).copy(alpha = 0.12f) to Color(0xFF18794E)
+        WorkbenchResourceState.RECEIVED,
+        WorkbenchResourceState.NEEDS_MANUAL_ACTION -> Color(0xFF9A6700).copy(alpha = 0.12f) to Color(0xFF9A6700)
+        WorkbenchResourceState.FAILED -> Color(0xFFB42318).copy(alpha = 0.12f) to Color(0xFFB42318)
     }
     Surface(
         shape = RoundedCornerShape(999.dp),
@@ -257,3 +256,11 @@ private fun StatusBadge(
         )
     }
 }
+
+private val ImportWorkbenchResource.statusDisplayLabel: String
+    get() = when (status) {
+        WorkbenchResourceState.APPLIED -> "已应用"
+        WorkbenchResourceState.RECEIVED -> "已接收"
+        WorkbenchResourceState.NEEDS_MANUAL_ACTION -> "待处理"
+        WorkbenchResourceState.FAILED -> "失败"
+    }

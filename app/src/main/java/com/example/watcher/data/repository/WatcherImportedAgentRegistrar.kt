@@ -3,6 +3,7 @@ package com.example.watcher.data.repository
 import com.example.watcher.WatcherAgentConfigImport
 import com.example.watcher.agentframework.core.AgentDefinition
 import com.example.watcher.agentframework.core.AgentRunConfig
+import com.example.watcher.agentframework.integration.APP_DEFAULT_LLM_BRAIN_FACTORY_ID
 import com.example.watcher.agentframework.integration.AppAgentBrainProfileConfig
 import com.example.watcher.agentframework.integration.withAppAgentBrainProfileConfig
 import com.example.watcher.agentframework.service.AgentRegistration
@@ -53,7 +54,9 @@ object WatcherImportedAgentRegistrar {
                 goal = DEFAULT_IMPORTED_GOAL,
                 metadata = durableImportMetadata
             ),
+            brainFactoryId = APP_DEFAULT_LLM_BRAIN_FACTORY_ID,
             config = AgentRunConfig(),
+            tags = setOf("xmax", "external-import"),
             metadata = registrationMetadata
         )
     }

@@ -170,6 +170,15 @@ internal fun ExternalImportStatusCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            if (status.hasImportedPayload) {
+                FilledTonalButton(
+                    onClick = { onOpenImportTarget(WatcherImportWorkspaceTarget.ImportWorkbench) },
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+                    Text("打开通用工作台")
+                }
+            }
+
             status.sections.forEach { section ->
                 ExternalImportSectionRow(
                     section = section,

@@ -30,6 +30,7 @@ object ImportWorkbenchContract {
         input: ImportedResourceInput
     ): List<String> {
         return buildList {
+            addAll(input.detailLines)
             add("source: ${batch.sourceLabel}")
             add("imported_at: ${batch.importedAt}")
             input.failedMessage?.takeIf { it.isNotBlank() }?.let { add("error: $it") }

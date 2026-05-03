@@ -61,6 +61,9 @@ private fun ApiWalletRoute(
         onDeleteProvider = viewModel::deleteProvider,
         onOpenImportTarget = { target ->
             when (target) {
+                WatcherImportWorkspaceTarget.ImportWorkbench -> {
+                    context.startActivity(ImportWorkbenchActivity.createIntent(context))
+                }
                 WatcherImportWorkspaceTarget.AgentConfig -> {
                     context.startActivity(AgentConfigActivity.createIntent(context))
                 }

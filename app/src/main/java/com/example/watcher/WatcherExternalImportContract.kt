@@ -86,6 +86,7 @@ data class WatcherXmaxImportStatusSection(
 )
 
 enum class WatcherImportWorkspaceTarget {
+    ImportWorkbench,
     AgentConfig,
     HiddenWorkbench
 }
@@ -143,14 +144,11 @@ object WatcherExternalImportContract {
             if (request.allowInsecureTls) {
                 add("allowInsecureTls 已收到，但当前 Watcher 版本仍要求 https 端点，已忽略该设置。")
             }
-            if (agentConfig != null) {
-                add("agentConfig 已收到，已写入 Watcher 暂存位，待后续 Agent Runtime 接入。")
-            }
             if (audienceConfig != null) {
-                add("audienceConfig 已收到，已写入 Watcher 暂存位，待后续 AI 观众接入。")
+                add("audienceConfig 已收到，需在通用工作台确认后落库。")
             }
             if (expertCouncilConfig != null) {
-                add("expertCouncilConfig 已收到，已写入 Watcher 暂存位，待后续专家团接入。")
+                add("expertCouncilConfig 已收到，需在通用工作台确认后落库。")
             }
         }
         return WatcherExternalImportPlan(
@@ -282,7 +280,7 @@ object WatcherExternalImportContract {
                     sourceLabel = sourceLabel,
                     lastImportedAt = lastImportedAt,
                     missingStep = "从 XMAX 重新导入 Agent 配置。",
-                    importedStep = "下一步：打开 Agent 配置页，校对提示词并启用该 Agent。",
+                    importedStep = "下一步：打开通用工作台或 Agent 配置页，校对并启用该 Agent。",
                     actionLabel = "打开 Agent 配置",
                     actionTarget = WatcherImportWorkspaceTarget.AgentConfig
                 )
@@ -295,7 +293,7 @@ object WatcherExternalImportContract {
                     sourceLabel = sourceLabel,
                     lastImportedAt = lastImportedAt,
                     missingStep = "从 XMAX 重新导入 AI 观众配置。",
-                    importedStep = "下一步：打开隐藏工作台，在 AI 观众里落这组配置。",
+                    importedStep = "下一步：打开通用工作台，在 AI 观众里确认并落这组配置。",
                     actionLabel = "打开隐藏工作台",
                     actionTarget = WatcherImportWorkspaceTarget.HiddenWorkbench
                 )
@@ -312,7 +310,7 @@ object WatcherExternalImportContract {
                     sourceLabel = sourceLabel,
                     lastImportedAt = lastImportedAt,
                     missingStep = "从 XMAX 重新导入专家团配置。",
-                    importedStep = "下一步：打开隐藏工作台，在专家团里落专家角色与工作流。",
+                    importedStep = "下一步：打开通用工作台，在专家团里确认并落专家角色与工作流。",
                     actionLabel = "打开隐藏工作台",
                     actionTarget = WatcherImportWorkspaceTarget.HiddenWorkbench
                 )

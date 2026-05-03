@@ -79,7 +79,6 @@ class WatcherExternalImportContractTest {
         assertEquals(listOf("产品", "技术"), plan.expertCouncilConfig.memberRoles)
         assertTrue(plan.ignoredSections.isEmpty())
         assertTrue(plan.warnings.any { it.contains("allowInsecureTls") })
-        assertTrue(plan.warnings.any { it.contains("agentConfig") })
         assertTrue(plan.warnings.any { it.contains("audienceConfig") })
         assertTrue(plan.warnings.any { it.contains("expertCouncilConfig") })
     }
