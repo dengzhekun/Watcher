@@ -65,6 +65,10 @@ internal fun compareVersionTokensForUpdate(left: List<Int>, right: List<Int>): I
     return 0
 }
 
+internal fun shouldCheckOfficialUpdate(packageName: String): Boolean {
+    return packageName == OFFICIAL_WATCHER_PACKAGE_NAME
+}
+
 class AppUpdateRepository(
     private val context: Context,
     private val gson: Gson = Gson()
@@ -77,6 +81,10 @@ class AppUpdateRepository(
 
     suspend fun checkForUpdate(): Result<AppUpdatePrompt?> = withContext(Dispatchers.IO) {
         runCatching {
+            if (!shouldCheckOfficialUpdate(context.packageName)) {
+                return@runCatching null
+            }
+
             val request = Request.Builder()
                 .url(METADATA_URL)
                 .header("Accept", "application/json")
@@ -184,3 +192,4 @@ class AppUpdateRepository(
 }
 
 private val VERSION_NUMBER_REGEX_FOR_UPDATE = Regex("\\d+")
+private const val OFFICIAL_WATCHER_PACKAGE_NAME = "com.shokz.watcher"

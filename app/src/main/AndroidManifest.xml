@@ -19,7 +19,7 @@
         android:maxSdkVersion="28" />
 
     <application
-        android:name=".WatcherApplication"
+        android:name="com.example.watcher.WatcherApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -34,23 +34,34 @@
         <uses-native-library android:name="libvndksupport.so" android:required="false" />
 
         <activity
-            android:name=".LiteRtActivity"
+            android:name="com.example.watcher.LiteRtActivity"
             android:exported="false"
             android:theme="@style/Theme.Watcher" />
         <activity
-            android:name=".AgentConfigActivity"
+            android:name="com.example.watcher.AgentConfigActivity"
             android:exported="false"
             android:theme="@style/Theme.Watcher" />
         <activity
-            android:name=".ApiWalletActivity"
+            android:name="com.example.watcher.ApiWalletActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Watcher">
+            <intent-filter>
+                <action android:name="com.xmax.watcher.action.OPEN_WALLET" />
+                <action android:name="com.example.watcher.action.OPEN_WALLET" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name="com.example.watcher.WatcherImportActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Watcher" />
+        <activity
+            android:name="com.example.watcher.DigitalLifeCardActivity"
             android:exported="false"
             android:theme="@style/Theme.Watcher" />
         <activity
-            android:name=".DigitalLifeCardActivity"
-            android:exported="false"
-            android:theme="@style/Theme.Watcher" />
-        <activity
-            android:name=".MainActivity"
+            android:name="com.example.watcher.MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
             android:label="@string/app_name"

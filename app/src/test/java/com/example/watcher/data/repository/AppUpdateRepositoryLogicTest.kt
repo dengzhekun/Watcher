@@ -7,6 +7,16 @@ import org.junit.Test
 
 class AppUpdateRepositoryLogicTest {
     @Test
+    fun disablesOfficialUpdateCheckForPrivatePackage() {
+        assertFalse(shouldCheckOfficialUpdate("com.example.watcher"))
+    }
+
+    @Test
+    fun keepsOfficialUpdateCheckForOfficialPackage() {
+        assertTrue(shouldCheckOfficialUpdate("com.shokz.watcher"))
+    }
+
+    @Test
     fun prefersVersionCodeWhenPresent() {
         val result = isAppUpdateAvailable(
             currentVersion = "1.0.99",

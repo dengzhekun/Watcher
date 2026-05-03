@@ -183,6 +183,17 @@ class IntentRepository(
         baselineSource: BaselineSource,
         hasImage: Boolean
     ): String {
+        return buildIntentPromptText(
+            baselineSource = baselineSource,
+            hasImage = hasImage
+        )
+    }
+}
+
+internal fun buildIntentPromptText(
+    baselineSource: BaselineSource,
+    hasImage: Boolean
+): String {
         val modeRequirement = when {
             !hasImage -> "- \u672A\u63D0\u4F9B\u56FE\u7247\u65F6\uff0cmonitorMode \u53EA\u80FD\u662F SceneBaseline\u3002"
             baselineSource == BaselineSource.UploadedImage ->
@@ -227,5 +238,4 @@ class IntentRepository(
             - promptTemplate \u5FC5\u987B\u8981\u6C42\u89C6\u89C9\u6A21\u578B\u53EA\u8FD4\u56DE JSON\uff0Csummary \u7B80\u77ED\u660E\u786E\uff0Creason \u805A\u7126\u57FA\u51C6\u56FE\u4E0E\u5F53\u524D\u753B\u9762\u7684\u5173\u952E\u5DEE\u5F02\u6216\u5339\u914D\u7ED3\u679C\uff0Cstatus \u53EA\u80FD\u662F ALERT\u3001WARNING\u3001NORMAL\u3001UNKNOWN \u4E4B\u4E00\u3002
             - \u4E0D\u8981\u8F93\u51FA\u6CE8\u91CA\u3001\u793A\u4F8B\u6216\u591A\u4F59\u5B57\u6BB5\u3002
         """.trimIndent()
-    }
 }

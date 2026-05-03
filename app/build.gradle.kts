@@ -44,7 +44,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.watcher"
+        applicationId = "com.xmax.watcher"
         minSdk = 29
         targetSdk = 35
         versionCode = resolvedVersionCode
@@ -130,7 +130,7 @@ android {
 
 val renameReleaseApk by tasks.registering {
     doLast {
-        val renamedApkName = "watcher-v${resolvedVersionName}-${resolvedVersionCode}-release.apk"
+        val renamedApkName = "watcher-xmax-v${resolvedVersionName}-${resolvedVersionCode}-release.apk"
         val candidateApkFiles = listOf(
             layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile,
             rootProject.file("app/release/app-release.apk")

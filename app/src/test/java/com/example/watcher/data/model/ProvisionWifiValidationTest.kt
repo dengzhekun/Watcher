@@ -28,8 +28,8 @@ class ProvisionWifiValidationTest {
         assertEquals(27, provisionWifiSsidUtf8Length(ssid))
         assertNull(validateProvisionWifiSsid(ssid))
         assertFalse(exceedsLegacyProvisionWifiSsidLimit(ssid))
-        assertNull(validateProvisionWifiSsid("$ssid网络"))
-        assertTrue(exceedsLegacyProvisionWifiSsidLimit("$ssid网络"))
+        assertNull(validateProvisionWifiSsid("${ssid}网络"))
+        assertTrue(exceedsLegacyProvisionWifiSsidLimit("${ssid}网络"))
     }
 
     @Test
