@@ -37,6 +37,49 @@ class WatcherExternalImportContractTest {
     }
 
     @Test
+    fun `parse import payload accepts explicit v1 schema version`() {
+        val plan = WatcherExternalImportContract.parseImportPayload(
+            """
+            {
+              "schemaVersion": "xmax.external_import.v1",
+              "providerId": "xmax_main_chat",
+              "providerName": "X-MAX 主站",
+              "endpoint": "https://api.example.com/v1",
+              "apiKey": "sk-test",
+              "modelName": "gpt-5.5"
+            }
+            """.trimIndent()
+        )
+
+        assertEquals("xmax_main_chat", plan.request.providerId)
+        assertTrue(plan.warnings.isEmpty())
+    }
+
+    @Test
+    fun `parse import payload rejects unsupported schema version`() {
+        val error = runCatching {
+            WatcherExternalImportContract.parseImportPayload(
+                """
+                {
+                  "schemaVersion": "xmax.external_import.v2",
+                  "providerId": "xmax_main_chat",
+                  "providerName": "X-MAX 主站",
+                  "endpoint": "https://api.example.com/v1",
+                  "apiKey": "sk-test",
+                  "modelName": "gpt-5.5"
+                }
+                """.trimIndent()
+            )
+        }.exceptionOrNull()
+
+        checkNotNull(error)
+        assertEquals(
+            "Unsupported import schemaVersion: xmax.external_import.v2. Supported version: xmax.external_import.v1.",
+            error.message
+        )
+    }
+
+    @Test
     fun `parse import payload captures extension sections and insecure tls warning`() {
         val plan = WatcherExternalImportContract.parseImportPayload(
             """

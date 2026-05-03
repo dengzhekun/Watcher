@@ -104,6 +104,7 @@ data class WatcherXmaxImportStatus(
 )
 
 object WatcherExternalImportContract {
+    const val SCHEMA_VERSION_V1 = "xmax.external_import.v1"
     const val ACTION_OPEN_WALLET = "com.xmax.watcher.action.OPEN_WALLET"
     const val ACTION_OPEN_WALLET_LEGACY = "com.example.watcher.action.OPEN_WALLET"
     const val EXTRA_IMPORT_PAYLOAD = "com.xmax.watcher.extra.IMPORT_PAYLOAD"
@@ -123,6 +124,7 @@ object WatcherExternalImportContract {
 
     fun parseImportPayload(raw: String): WatcherExternalImportPlan {
         val root = JsonParser.parseString(raw).asJsonObject
+        validateSchemaVersion(root)
         val request = WatcherExternalImportRequest(
             providerId = root.requireString("providerId"),
             providerName = root.requireString("providerName"),
@@ -375,6 +377,14 @@ object WatcherExternalImportContract {
                 providerState?.modelName?.takeIf { it.isNotBlank() }?.let { add("模型：$it") }
             }
         )
+    }
+
+    private fun validateSchemaVersion(root: JsonObject) {
+        val schemaVersion = root.readOptionalString("schemaVersion")
+            .ifBlank { SCHEMA_VERSION_V1 }
+        require(schemaVersion == SCHEMA_VERSION_V1) {
+            "Unsupported import schemaVersion: $schemaVersion. Supported version: $SCHEMA_VERSION_V1."
+        }
     }
 
     private fun JsonObject.requireString(key: String): String {

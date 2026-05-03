@@ -65,7 +65,7 @@ The current Watcher implementation accepts payloads without `schemaVersion`. New
 }
 ```
 
-Targets must treat a missing `schemaVersion` as `xmax.external_import.v1` for compatibility. Unknown future versions should be rejected with a clear result message instead of silently importing.
+Targets must treat a missing `schemaVersion` as `xmax.external_import.v1` for compatibility. Unknown future versions must be rejected with a clear result message instead of silently importing.
 
 ## Payload Shape
 
@@ -228,9 +228,8 @@ Please also add a short document in your repo explaining:
 
 ## Current Watcher Gaps
 
-Watcher already implements the v1 flow, but these items remain future work:
+Watcher already implements the v1 flow and rejects unknown schema versions, but these items remain future work:
 
-1. Parse and validate `schemaVersion` explicitly.
-2. Generalize staged sections beyond one audience and one expert council.
-3. Return per-resource IDs in `RESULT_PAYLOAD`.
-4. Add a user-facing import history list instead of only the latest batch.
+1. Generalize staged sections beyond one audience and one expert council.
+2. Return per-resource IDs in `RESULT_PAYLOAD`.
+3. Add a user-facing import history list instead of only the latest batch.
