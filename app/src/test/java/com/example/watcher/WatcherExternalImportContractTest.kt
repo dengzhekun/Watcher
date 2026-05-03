@@ -213,6 +213,10 @@ class WatcherExternalImportContractTest {
         )
 
         assertTrue(status.hasImportedPayload)
+        assertEquals("xmax_main_chat", status.providerId)
+        assertTrue(status.providerFound)
+        assertTrue(status.providerEnabled)
+        assertTrue(status.providerIsDefault)
         assertEquals("主站 / 聊天模型", status.sourceLabel)
         assertEquals(importedAt, status.lastImportedAt)
         assertEquals(4, status.sections.size)

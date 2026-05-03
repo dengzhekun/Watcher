@@ -92,7 +92,13 @@ fun ApiWalletScreen(
             }
 
             item {
-                ExternalImportStatusCard(uiState.xmaxImportStatus)
+                ExternalImportStatusCard(
+                    status = uiState.xmaxImportStatus,
+                    isTestingProvider = uiState.testingProviderId == uiState.xmaxImportStatus.providerId,
+                    onTestProvider = onTestProvider,
+                    onSetDefault = onSetDefault,
+                    onToggleProviderEnabled = onToggleEnabled
+                )
             }
 
             item {

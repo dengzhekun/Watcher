@@ -8,13 +8,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -101,7 +104,13 @@ internal fun WalletSummaryCard(uiState: ApiWalletUiState) {
 }
 
 @Composable
-internal fun ExternalImportStatusCard(status: WatcherXmaxImportStatus) {
+internal fun ExternalImportStatusCard(
+    status: WatcherXmaxImportStatus,
+    isTestingProvider: Boolean,
+    onTestProvider: (String) -> Unit,
+    onSetDefault: (String) -> Unit,
+    onToggleProviderEnabled: (String, Boolean) -> Unit
+) {
     val accent = if (status.hasImportedPayload) Color(0xFF18794E) else Color(0xFF9A6700)
     Card(
         shape = RoundedCornerShape(24.dp),
@@ -155,6 +164,91 @@ internal fun ExternalImportStatusCard(status: WatcherXmaxImportStatus) {
 
             status.sections.forEach { section ->
                 ExternalImportSectionRow(section)
+            }
+
+            ExternalImportProviderActions(
+                status = status,
+                isTestingProvider = isTestingProvider,
+                onTestProvider = onTestProvider,
+                onSetDefault = onSetDefault,
+                onToggleProviderEnabled = onToggleProviderEnabled
+            )
+        }
+    }
+}
+
+@Composable
+private fun ExternalImportProviderActions(
+    status: WatcherXmaxImportStatus,
+    isTestingProvider: Boolean,
+    onTestProvider: (String) -> Unit,
+    onSetDefault: (String) -> Unit,
+    onToggleProviderEnabled: (String, Boolean) -> Unit
+) {
+    val providerId = status.providerId
+    if (!status.providerFound || providerId.isNullOrBlank()) return
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.07f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = "导入 Provider 管理",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Text(
+                        text = if (status.providerEnabled) {
+                            "已在钱包中启用，可直接测试或设为默认。"
+                        } else {
+                            "当前已禁用；启用后再测试连通性。"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = status.providerEnabled,
+                    onCheckedChange = { enabled -> onToggleProviderEnabled(providerId, enabled) }
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilledTonalButton(
+                    onClick = { onTestProvider(providerId) },
+                    enabled = status.providerEnabled && !isTestingProvider,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+                    Text(if (isTestingProvider) "测试中..." else "测试连通性")
+                }
+                OutlinedButton(
+                    onClick = { onSetDefault(providerId) },
+                    enabled = status.providerEnabled && !status.providerIsDefault,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+                    Text(if (status.providerIsDefault) "已是默认" else "设为默认")
+                }
             }
         }
     }

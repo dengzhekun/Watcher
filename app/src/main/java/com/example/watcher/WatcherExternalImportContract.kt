@@ -84,6 +84,10 @@ data class WatcherXmaxImportStatusSection(
 
 data class WatcherXmaxImportStatus(
     val hasImportedPayload: Boolean = false,
+    val providerId: String? = null,
+    val providerFound: Boolean = false,
+    val providerEnabled: Boolean = false,
+    val providerIsDefault: Boolean = false,
     val sourceLabel: String = "尚未导入",
     val lastImportedAt: Long? = null,
     val sections: List<WatcherXmaxImportStatusSection> = emptyList(),
@@ -306,6 +310,10 @@ object WatcherExternalImportContract {
 
         return WatcherXmaxImportStatus(
             hasImportedPayload = true,
+            providerId = providerState?.providerId,
+            providerFound = matchingProvider != null,
+            providerEnabled = matchingProvider?.enabled == true,
+            providerIsDefault = matchingProvider != null && matchingProvider.id == defaultProviderId,
             sourceLabel = sourceLabel,
             lastImportedAt = lastImportedAt,
             sections = sections,
