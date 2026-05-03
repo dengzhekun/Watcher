@@ -53,6 +53,10 @@
             </intent-filter>
         </activity>
         <activity
+            android:name="com.example.watcher.ImportWorkbenchActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Watcher" />
+        <activity
             android:name="com.example.watcher.WatcherImportActivity"
             android:exported="true"
             android:theme="@style/Theme.Watcher" />
