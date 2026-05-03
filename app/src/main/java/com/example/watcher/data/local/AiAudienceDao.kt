@@ -36,6 +36,9 @@ interface AiAudienceDao {
     @Query("SELECT * FROM ai_audiences ORDER BY name ASC")
     fun observeAll(): Flow<List<AiAudienceEntity>>
 
+    @Query("SELECT * FROM ai_audiences ORDER BY name ASC")
+    suspend fun getAll(): List<AiAudienceEntity>
+
     @Query("SELECT * FROM ai_audiences WHERE enabled = 1 ORDER BY name ASC")
     suspend fun getEnabled(): List<AiAudienceEntity>
 

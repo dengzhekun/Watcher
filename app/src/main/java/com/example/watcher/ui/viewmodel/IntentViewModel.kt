@@ -34,6 +34,7 @@ import com.example.watcher.data.repository.AndroidAlertNotifier
 import com.example.watcher.data.repository.AppUpdatePrompt
 import com.example.watcher.data.repository.AppUpdateRepository
 import com.example.watcher.data.repository.CouncilExpertRepository
+import com.example.watcher.data.repository.HiddenWorkbenchImportApplier
 import com.example.watcher.data.repository.HistoryRepository
 import com.example.watcher.data.repository.HiddenWorkbenchImportRepository
 import com.example.watcher.data.repository.IntentRepository
@@ -59,8 +60,6 @@ import com.example.watcher.data.model.LiveCommentaryState
 import com.example.watcher.data.model.LiveSpeechState
 import com.example.watcher.data.model.LlmProviderEntity
 import com.example.watcher.data.repository.HiddenWorkbenchPendingImports
-import com.example.watcher.data.repository.toAudienceEntity
-import com.example.watcher.data.repository.toCouncilTemplateEntity
 import com.example.watcher.data.repository.AiAudienceManager
 import com.example.watcher.data.repository.LiveSpeechRecognitionManager
 import com.example.watcher.data.remote.ArkStreamingClient
@@ -77,7 +76,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
@@ -149,6 +147,14 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
     private val templateRepository = TemplateRepository(database.templateDao())
     private val councilExpertRepository = CouncilExpertRepository(database.councilExpertDao())
     private val hiddenWorkbenchImportRepository = HiddenWorkbenchImportRepository.fromContext(appContext)
+    private val hiddenWorkbenchImportApplier = HiddenWorkbenchImportApplier(
+        stagedImports = hiddenWorkbenchImportRepository,
+        listProviders = { llmWalletRepository.listProviders() },
+        listAudiences = { database.aiAudienceDao().getAll() },
+        saveAudience = { audience -> database.aiAudienceDao().upsert(audience) },
+        listCouncilTemplates = { templateRepository.councilTemplatesFirstSnapshot() },
+        saveCouncilTemplate = { template -> database.templateDao().upsertCouncil(template) }
+    )
     private val councilEntryGenerator = CouncilEntryConfigGenerator()
 
     init {
@@ -462,65 +468,17 @@ class IntentViewModel(application: Application) : AndroidViewModel(application) 
 
     fun applyPendingAudienceImport(onResult: (String) -> Unit) {
         viewModelScope.launch {
-            val pending = loadPendingHiddenWorkbenchImports().audienceImport
-            if (pending == null) {
-                onResult("当前没有可应用的 AI 观众导入。")
-                return@launch
-            }
-            val providers = llmWalletRepository.listProviders()
-            val provider = pending.providerIdHint
-                ?.let { providerId -> providers.firstOrNull { it.id == providerId } }
-                ?: providers.firstOrNull { it.enabled }
-                ?: providers.firstOrNull()
-            val providerId = provider?.id ?: pending.providerIdHint.orEmpty()
-            val shouldEnableAudience = pending.enabled && provider != null
-
-            val existing = database.aiAudienceDao()
-                .observeAll()
-                .first()
-                .firstOrNull { it.name == pending.roomName }
-            val entity = pending.toAudienceEntity(
-                providerId = providerId,
-                existing = existing,
-                enabled = shouldEnableAudience
-            )
-            database.aiAudienceDao().upsert(entity)
-            hiddenWorkbenchImportRepository.clearAudienceImport()
+            val result = hiddenWorkbenchImportApplier.applyAudience()
             refreshPendingHiddenWorkbenchImports()
-            onResult(
-                if (provider == null) {
-                    "AI 观众「${pending.roomName}」已导入为停用草稿；请在 API 钱包补 Provider 后再启用。"
-                } else if (existing == null) {
-                    "AI 观众「${pending.roomName}」已导入。"
-                } else {
-                    "AI 观众「${pending.roomName}」已更新。"
-                }
-            )
+            onResult(result.message)
         }
     }
 
     fun applyPendingCouncilImport(onResult: (String) -> Unit) {
         viewModelScope.launch {
-            val pending = loadPendingHiddenWorkbenchImports().councilImport
-            if (pending == null) {
-                onResult("当前没有可应用的专家团导入。")
-                return@launch
-            }
-
-            val existing = templateRepository.councilTemplatesFirstSnapshot()
-                .firstOrNull { it.label == pending.topic }
-            database.templateDao().upsertCouncil(
-                pending.toCouncilTemplateEntity(existing = existing)
-            )
-            hiddenWorkbenchImportRepository.clearCouncilImport()
+            val result = hiddenWorkbenchImportApplier.applyCouncil()
             refreshPendingHiddenWorkbenchImports()
-            onResult(
-                if (existing == null) {
-                    "智囊团模板「${pending.topic}」已导入。"
-                } else {
-                    "智囊团模板「${pending.topic}」已更新。"
-                }
-            )
+            onResult(result.message)
         }
     }
 
