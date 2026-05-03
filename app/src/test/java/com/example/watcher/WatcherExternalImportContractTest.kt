@@ -224,11 +224,33 @@ class WatcherExternalImportContractTest {
         assertTrue(status.sections[0].imported)
         assertTrue(status.sections[0].enabled)
         assertTrue(status.sections[0].summary.contains("X-MAX 主站"))
+        assertTrue(status.sections[0].detailLines.any { it.contains("https://api.example.com/v1") })
         assertEquals("Agent", status.sections[1].title)
         assertEquals("Watcher Agent", status.sections[1].summary)
+        assertEquals("打开 Agent 配置", status.sections[1].actionLabel)
+        assertEquals(
+            WatcherImportWorkspaceTarget.AgentConfig,
+            status.sections[1].actionTarget
+        )
+        assertTrue(status.sections[1].detailLines.any { it.contains("watcher_agent") })
+        assertTrue(status.sections[1].detailLines.any { it.contains("watcher://agent/main") })
         assertEquals("AI 观众", status.sections[2].title)
         assertFalse(status.sections[2].enabled)
+        assertEquals("打开隐藏工作台", status.sections[2].actionLabel)
+        assertEquals(
+            WatcherImportWorkspaceTarget.HiddenWorkbench,
+            status.sections[2].actionTarget
+        )
+        assertTrue(status.sections[2].detailLines.any { it.contains("观察席") })
+        assertTrue(status.sections[2].detailLines.any { it.contains("短句") })
         assertEquals("专家团", status.sections[3].title)
+        assertEquals("打开隐藏工作台", status.sections[3].actionLabel)
+        assertEquals(
+            WatcherImportWorkspaceTarget.HiddenWorkbench,
+            status.sections[3].actionTarget
+        )
+        assertTrue(status.sections[3].detailLines.any { it.contains("产品、技术") })
+        assertTrue(status.sections[3].detailLines.any { it.contains("先分歧后结论") })
         assertTrue(status.nextStepHint.contains("测试"))
     }
 }

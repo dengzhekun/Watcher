@@ -1,5 +1,6 @@
 package com.example.watcher.ui.screens
 
+import com.example.watcher.WatcherImportWorkspaceTarget
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -48,6 +49,7 @@ fun ApiWalletScreen(
     onSetDefault: (String) -> Unit,
     onToggleEnabled: (String, Boolean) -> Unit,
     onDeleteProvider: (String) -> Unit,
+    onOpenImportTarget: (WatcherImportWorkspaceTarget) -> Unit,
     onClearMessage: () -> Unit
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
@@ -97,7 +99,8 @@ fun ApiWalletScreen(
                     isTestingProvider = uiState.testingProviderId == uiState.xmaxImportStatus.providerId,
                     onTestProvider = onTestProvider,
                     onSetDefault = onSetDefault,
-                    onToggleProviderEnabled = onToggleEnabled
+                    onToggleProviderEnabled = onToggleEnabled,
+                    onOpenImportTarget = onOpenImportTarget
                 )
             }
 

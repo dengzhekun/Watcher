@@ -41,6 +41,7 @@ private fun ApiWalletRoute(
         )
     )
 ) {
+    val context = LocalContext.current
     val uiState = viewModel.uiState.collectAsStateWithLifecycle().value
     ApiWalletScreen(
         uiState = uiState,
@@ -58,6 +59,21 @@ private fun ApiWalletRoute(
         onSetDefault = viewModel::setDefaultProvider,
         onToggleEnabled = viewModel::setProviderEnabled,
         onDeleteProvider = viewModel::deleteProvider,
+        onOpenImportTarget = { target ->
+            when (target) {
+                WatcherImportWorkspaceTarget.AgentConfig -> {
+                    context.startActivity(AgentConfigActivity.createIntent(context))
+                }
+                WatcherImportWorkspaceTarget.HiddenWorkbench -> {
+                    context.startActivity(
+                        MainActivity.createIntent(
+                            context = context,
+                            startPage = MainActivity.StartPage.Templates
+                        )
+                    )
+                }
+            }
+        },
         onClearMessage = viewModel::clearMessage
     )
 }

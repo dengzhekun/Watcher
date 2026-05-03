@@ -79,8 +79,16 @@ data class WatcherXmaxImportStatusSection(
     val summary: String,
     val source: String,
     val lastImportedAt: Long?,
-    val nextStep: String
+    val nextStep: String,
+    val detailLines: List<String> = emptyList(),
+    val actionLabel: String? = null,
+    val actionTarget: WatcherImportWorkspaceTarget? = null
 )
+
+enum class WatcherImportWorkspaceTarget {
+    AgentConfig,
+    HiddenWorkbench
+}
 
 data class WatcherXmaxImportStatus(
     val hasImportedPayload: Boolean = false,
@@ -270,20 +278,26 @@ object WatcherExternalImportContract {
                 agentConfig.toStatusSection(
                     title = "Agent",
                     summary = { it.agentName.ifBlank { it.agentId.ifBlank { "已暂存 Agent 配置" } } },
+                    details = { it.toDetailLines() },
                     sourceLabel = sourceLabel,
                     lastImportedAt = lastImportedAt,
                     missingStep = "从 XMAX 重新导入 Agent 配置。",
-                    importedStep = "下一步：在 Agent 配置页接入并启用该 Agent。"
+                    importedStep = "下一步：打开 Agent 配置页，校对提示词并启用该 Agent。",
+                    actionLabel = "打开 Agent 配置",
+                    actionTarget = WatcherImportWorkspaceTarget.AgentConfig
                 )
             )
             add(
                 audienceConfig.toStatusSection(
                     title = "AI 观众",
                     summary = { it.roomName.ifBlank { "已暂存 AI 观众配置" } },
+                    details = { it.toDetailLines() },
                     sourceLabel = sourceLabel,
                     lastImportedAt = lastImportedAt,
                     missingStep = "从 XMAX 重新导入 AI 观众配置。",
-                    importedStep = "下一步：在直播间观众管理里接入这组观众。"
+                    importedStep = "下一步：打开隐藏工作台，在 AI 观众里落这组配置。",
+                    actionLabel = "打开隐藏工作台",
+                    actionTarget = WatcherImportWorkspaceTarget.HiddenWorkbench
                 )
             )
             add(
@@ -294,10 +308,13 @@ object WatcherExternalImportContract {
                             it.memberRoles.joinToString("、").ifBlank { "已暂存专家团配置" }
                         }
                     },
+                    details = { it.toDetailLines() },
                     sourceLabel = sourceLabel,
                     lastImportedAt = lastImportedAt,
                     missingStep = "从 XMAX 重新导入专家团配置。",
-                    importedStep = "下一步：在 Council 模式中接入专家角色与工作流。"
+                    importedStep = "下一步：打开隐藏工作台，在专家团里落专家角色与工作流。",
+                    actionLabel = "打开隐藏工作台",
+                    actionTarget = WatcherImportWorkspaceTarget.HiddenWorkbench
                 )
             )
         }
@@ -353,7 +370,12 @@ object WatcherExternalImportContract {
             summary = summary,
             source = sourceLabel,
             lastImportedAt = lastImportedAt,
-            nextStep = nextStep
+            nextStep = nextStep,
+            detailLines = buildList {
+                providerState?.providerId?.takeIf { it.isNotBlank() }?.let { add("Provider ID：$it") }
+                providerState?.endpoint?.takeIf { it.isNotBlank() }?.let { add("接口：$it") }
+                providerState?.modelName?.takeIf { it.isNotBlank() }?.let { add("模型：$it") }
+            }
         )
     }
 
@@ -446,10 +468,13 @@ object WatcherExternalImportContract {
     private fun <T> T?.toStatusSection(
         title: String,
         summary: (T) -> String,
+        details: (T) -> List<String>,
         sourceLabel: String,
         lastImportedAt: Long?,
         missingStep: String,
-        importedStep: String
+        importedStep: String,
+        actionLabel: String? = null,
+        actionTarget: WatcherImportWorkspaceTarget? = null
     ): WatcherXmaxImportStatusSection where T : Any {
         val enabled = when (this) {
             is WatcherAgentConfigImport -> this.enabled
@@ -464,7 +489,43 @@ object WatcherExternalImportContract {
             summary = this?.let(summary) ?: "尚未导入 $title",
             source = sourceLabel,
             lastImportedAt = if (this != null) lastImportedAt else null,
-            nextStep = if (this != null) importedStep else missingStep
+            nextStep = if (this != null) importedStep else missingStep,
+            detailLines = this?.let(details).orEmpty(),
+            actionLabel = if (this != null) actionLabel else null,
+            actionTarget = if (this != null) actionTarget else null
         )
+    }
+
+    private fun WatcherAgentConfigImport.toDetailLines(): List<String> {
+        return buildList {
+            agentId.takeIf { it.isNotBlank() }?.let { add("Agent ID：$it") }
+            entryPoint.takeIf { it.isNotBlank() }?.let { add("入口：$it") }
+            systemPrompt.takeIf { it.isNotBlank() }?.let { add("提示词：${it.previewLine()}") }
+        }
+    }
+
+    private fun WatcherAudienceConfigImport.toDetailLines(): List<String> {
+        return buildList {
+            roomName.takeIf { it.isNotBlank() }?.let { add("房间：$it") }
+            responseStyle.takeIf { it.isNotBlank() }?.let { add("风格：$it") }
+            focusPrompt.takeIf { it.isNotBlank() }?.let { add("关注点：${it.previewLine()}") }
+        }
+    }
+
+    private fun WatcherExpertCouncilConfigImport.toDetailLines(): List<String> {
+        return buildList {
+            topic.takeIf { it.isNotBlank() }?.let { add("主题：$it") }
+            memberRoles.takeIf { it.isNotEmpty() }?.let { add("角色：${it.joinToString("、")}") }
+            workflow.takeIf { it.isNotBlank() }?.let { add("流程：${it.previewLine()}") }
+        }
+    }
+
+    private fun String.previewLine(maxLength: Int = 72): String {
+        val normalized = replace('\n', ' ').trim()
+        return if (normalized.length <= maxLength) {
+            normalized
+        } else {
+            normalized.take(maxLength - 1) + "…"
+        }
     }
 }

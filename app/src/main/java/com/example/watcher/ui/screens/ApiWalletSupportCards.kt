@@ -1,5 +1,6 @@
 package com.example.watcher.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,11 +20,17 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.example.watcher.WatcherImportWorkspaceTarget
 import com.example.watcher.WatcherXmaxImportStatus
 import com.example.watcher.WatcherXmaxImportStatusSection
 import com.example.watcher.ui.viewmodel.ApiWalletUiState
@@ -109,7 +116,8 @@ internal fun ExternalImportStatusCard(
     isTestingProvider: Boolean,
     onTestProvider: (String) -> Unit,
     onSetDefault: (String) -> Unit,
-    onToggleProviderEnabled: (String, Boolean) -> Unit
+    onToggleProviderEnabled: (String, Boolean) -> Unit,
+    onOpenImportTarget: (WatcherImportWorkspaceTarget) -> Unit
 ) {
     val accent = if (status.hasImportedPayload) Color(0xFF18794E) else Color(0xFF9A6700)
     Card(
@@ -163,7 +171,10 @@ internal fun ExternalImportStatusCard(
             )
 
             status.sections.forEach { section ->
-                ExternalImportSectionRow(section)
+                ExternalImportSectionRow(
+                    section = section,
+                    onOpenImportTarget = onOpenImportTarget
+                )
             }
 
             ExternalImportProviderActions(
@@ -255,7 +266,12 @@ private fun ExternalImportProviderActions(
 }
 
 @Composable
-private fun ExternalImportSectionRow(section: WatcherXmaxImportStatusSection) {
+private fun ExternalImportSectionRow(
+    section: WatcherXmaxImportStatusSection,
+    onOpenImportTarget: (WatcherImportWorkspaceTarget) -> Unit
+) {
+    var expanded by rememberSaveable(section.title) { mutableStateOf(false) }
+    val canExpand = section.detailLines.isNotEmpty()
     val label = when {
         !section.imported -> "未导入"
         section.enabled -> "已启用"
@@ -272,49 +288,88 @@ private fun ExternalImportSectionRow(section: WatcherXmaxImportStatusSection) {
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.Top
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top
             ) {
-                Text(
-                    text = section.title,
-                    style = MaterialTheme.typography.labelLarge
-                )
-                Text(
-                    text = section.summary,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = section.lastImportedAt?.let {
-                        "来源 ${section.source} · ${formatDateTime(it)}"
-                    } ?: "来源 ${section.source}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = section.nextStep,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Text(
+                        text = section.title,
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    Text(
+                        text = section.summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = section.lastImportedAt?.let {
+                            "来源 ${section.source} · ${formatDateTime(it)}"
+                        } ?: "来源 ${section.source}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = section.nextStep,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = accent.copy(alpha = 0.12f)
+                ) {
+                    Text(
+                        text = label,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = accent
+                    )
+                }
             }
-            Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = accent.copy(alpha = 0.12f)
-            ) {
-                Text(
-                    text = label,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = accent
-                )
+
+            if (canExpand || section.actionLabel != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (canExpand) {
+                        TextButton(onClick = { expanded = !expanded }) {
+                            Text(if (expanded) "收起详情" else "查看详情")
+                        }
+                    }
+                    section.actionLabel?.let { actionLabel ->
+                        val actionTarget = section.actionTarget
+                        if (actionTarget != null) {
+                            TextButton(onClick = { onOpenImportTarget(actionTarget) }) {
+                                Text(actionLabel)
+                            }
+                        }
+                    }
+                }
+            }
+
+            AnimatedVisibility(visible = expanded && canExpand) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    section.detailLines.forEach { line ->
+                        Text(
+                            text = line,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
             }
         }
     }

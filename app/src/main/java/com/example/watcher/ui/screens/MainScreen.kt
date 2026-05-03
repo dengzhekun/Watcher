@@ -81,7 +81,8 @@ private const val UI_HINT_PREFS = "watcher_ui_hints"
 private const val KEY_PAGER_COACHMARK_SEEN = "pager_coachmark_seen_v1"
 
 @Composable
-fun MainScreen(
+internal fun MainScreen(
+    initialPage: HubPage = HubPage.Hub,
     viewModel: IntentViewModel = viewModel(
         factory = androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.getInstance(
             LocalContext.current.applicationContext as android.app.Application
@@ -148,7 +149,7 @@ fun MainScreen(
     }
 
     val pagerState = rememberPagerState(
-        initialPage = HubPage.Hub.pageIndex,
+        initialPage = initialPage.pageIndex,
         pageCount = { HubPage.entries.size }
     )
     var pendingNavigationPage by rememberSaveable {
